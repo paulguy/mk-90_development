@@ -1,0 +1,354 @@
+    ; Some code and ideas taken from
+    ; https://github.com/vladkorotnev/SMPEmu/blob/master/pdp/pdpfw.mac  and
+    ; https://github.com/azya52/MK90/blob/master/TRex/trex.mac
+
+	.ENABL AMA 	; Absolute addressing
+	.ASECT		; Absolute section
+    .RADIX 10
+
+	.= 0		; Beginning of cartridge
+scratch: ; this can be used as memory after things are loaded
+
+	;	----------------------------------
+	;	 OS Procedures and Vars
+	;	----------------------------------
+
+    PRINTATTRS = ^O34072
+    PRINTNUM = ^O153360 ; arg. r3
+    PRINT = ^O153414 ; arg. r1
+    INITRAM = ^O153700
+    INITTTY = ^O120536
+    LCDINA = ^O164000
+    LCDINB = ^O164002
+    WAITCOMM = ^O174506
+    SMPCMD = ^O164026
+    SMPBAUD = ^O164022
+    SMPCS = ^O164024
+    SMPIO = ^O164020
+    GETCH = ^O131120
+    PUTCH = ^O116542
+
+    BOOTBLOCK_SIZE = 512
+
+    SCREEN_WIDTH_B = 30
+    SCREEN_WIDTH_W = SCREEN_WIDTH_B/2
+    SCREEN_SIZE_B = 960
+    SCREEN_SIZE_W = SCREEN_SIZE_B/2
+    SCREEN_HEIGHT = 64
+    SCREEN_WIDTH = 120
+
+    arg0 = scratch
+    arg1 = arg0+2
+    arg2 = arg1+2
+    arg3 = arg2+2
+    arg4 = arg3+2
+    arg5 = arg4+2
+    arg6 = arg5+2
+    arg7 = arg6+2
+    arg8 = arg7+2
+    arg9 = arg8+2
+
+    scratch0 = arg0
+    scratch1 = arg1
+    scratch2 = arg2
+    scratch3 = arg3
+    scratch4 = arg4
+    scratch5 = arg5
+    scratch6 = arg6
+    scratch7 = arg7
+    scratch8 = arg8
+    scratch9 = arg9
+
+    nop ; seems to be needed
+
+	mov #endOfProgram, r4
+	mov	#endOfRAM-endOfProgram, r3
+loaderClearScreenLoop:
+	clr	(r4)+
+	sob	r3, loaderClearScreenLoop
+
+	mov	#screen0, @#LCDINA
+	mov #^B1000100011000110, @#LCDINB	;26Hz
+	
+	;Loader copyed from Game of Life app of Piotr Piatek
+    ;Which I copied again from the T-Rex game
+	; specify the SMP address
+	mtps #^O340		;disable interrupts
+	bis	#8, r5		;writing to the SMP
+	mov	r5,(r1)
+	mov	#^O240, @#SMPCMD	;Write Address
+	jsr	pc,(r2)
+	mov #BOOTBLOCK_SIZE/256, @#SMPIO	;high address byte
+	jsr	pc,(r2)
+	mov #BOOTBLOCK_SIZE, @#SMPIO	;high address byte
+	jsr	pc, (r2)
+	tst	@#SMPCMD
+	jsr	pc, (r2)
+	; load data
+	mov	#endOfProgram-BOOTBLOCK_SIZE, r4		;number of bytes
+	mov	#BOOTBLOCK_SIZE, r3
+	mov	#^O320, @#SMPCMD	;Read Postincrement
+	jsr	pc, (r2)
+	bic	#8, r5		;reading from the SMP
+	mov	r5, (r1)
+	jsr	pc, (r2)
+nxtb:	
+	movb @#SMPIO, (r3)+	;read data byte from the SMP to the RAM
+	jsr	pc, (r2)
+	sob	r4, nxtb		;next data byte
+	tst	@#SMPCMD
+	jsr	pc, (r2)
+	; start the loaded program
+	mov	#^O340, -(sp)	;user mode, interrupts disabled
+	;mov	#^O000, -(sp)	;user mode, interrupts enable
+	mov	#start, -(sp)
+	rti
+endOfLoader:
+    .PRINT endOfLoader ; Loader Size
+
+    .= 200 ; Location of KBCU IV
+    .word	^O130514, 0000	
+
+drawBitmap:
+    ; Draw a bitmap to the screen
+    ; arg0 - pointer to data
+    ; arg1 - width in bytes
+    ; arg2 - height in lines
+    ; arg3 - X position
+    ; arg4 - Y position
+
+    ; figure out if the bitmap starts on the top or bottom of the screen split
+    mov @arg4, r0
+    cmp #SCREEN_HEIGHT/2, r0
+    bge bitmapStartsBottom
+
+; bitmap starts at top
+    ; figure out if the sprite crosses the split and by how much
+    add @arg2, r0
+    sub #SCREEN_HEIGHT/2, r0
+    bge bitmapCrossesSplit
+
+; bitmap is entirely on top
+    mov @arg2, r1 ; get the full height of the sprite
+
+    ; do bitmap copy for top of screen (low bits)
+
+    rts
+
+bitmapCrossesSplit:
+    mov @arg2, r1
+    sub r0, r1 ; get how much of the sprite is on the top of the screen
+    mov r1, @arg2 ; save remaining since we don't need it anymore, so r0 can be used
+
+    ; do bitmap copy for top of screen
+
+    mov @arg2, r1
+bitmapStartsBottom:
+
+    ; do bitmap copy for bottom of screen (high bits)
+
+    rts
+
+copyBitmapTop:
+    ; r1 - height to copy
+
+    ; save sp to get an extra register
+    mov sp, @scratch5
+    ; save r1 because it'll be used with sob
+    mov r1, @scratch6
+    ; copy pointer to bitmap so it can be updated
+    mov @arg0, @scratch7
+    ; copy width so it can be iterated over
+    mov @arg1, @scratch8
+
+    ; calculate pointer to first screen byte
+    mov @arg4, r2
+    mul #SCREEN_WIDTH_B, r2
+
+    mov @arg3, r3 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    asr r3
+    asr r3
+    asr r3
+    add r3, r2 ; add X offset to screen start pointer
+
+    mov r2, @scratch9 ; save the screen pointer too
+
+    mov @scratch7, r0 ; get first pointer to bitmap
+
+    mov @arg3, r3 ; get how shifted right the value is by keeping the low 3 bits
+    bic #1111111111111000, r3
+
+    ; get a bit mask to clear from the screen word
+    mov #0000000011111111, sp
+copyTopShift:
+    asr sp
+    sob r3, copyTopShift
+
+    beq centerStripLoopTop ; skip left strip if mask is 0
+
+leftStripLoopTop:
+    movb (r0), r4 ; get bitmap byte
+    bic #1111111100000000, r4 ; clear high bits
+    mov r3, r5 ; get shift amount
+leftTopShift: ; shift bitmap bits right
+    asr r4 
+    sob r5, leftTopShift
+    
+    mov (r2), r5 ; get screen word
+
+    bic sp, r5 ; clear bits
+    bis r4, r5 ; set bitmap bits in to screen word
+
+    mov r5, (r2) ; write back to screen
+
+    add #SCREEN_WIDTH_B, r2 ; next screen row
+    add @arg1, r0 ; next bitmap row, ran out of registers
+    sob r1, leftStripLoopTop
+
+    mov @arg0, r0 ; restore bitmap pointer in to r0
+    ; bitmap pointer stays the same because the right side of the
+    ; leftmost byte is used for the leftmost center column
+
+    add #2, @scratch9 ; next screen column
+    mov @scratch9, r2 ; restore screen pointer
+
+    com sp ; invert to clear the left side of the screen word
+    bic #1111111100000000, sp ; but don't clear the screen word high bits
+
+    mov scratch6, r1 ; restore height
+
+centerStripLoopTop:
+    inc r0 ; get right byte first so r5 is free later
+
+    movb (r0)-, r4 ; get right bitmap byte
+    bic #1111111100000000, r4 ; clear high bits
+
+    mov r3, r5 ; get shift amount (r5 is used here)
+centerTopShift: ; shift bitmap bits
+    asr r4 
+    sob r5, leftTopShift
+
+    movb (r0), r5 ; get left bitmap byte
+
+    sub #8, r3 ; get how far left to shift
+    neg r3
+    ash r3, r5 ; shift byte left
+    sub #8, r3 ; restore right shift value
+    neg r3
+
+    bic #1111111100000000, r5 ; clear high bits
+
+    bis r5, r4 ; combine left byte in to right byte
+
+    mov (r2), r5 ; get screen word
+
+    bic #0000000011111111, r5 ; clear low bits
+    bis r4, r5 ; write bitmap in to screen word
+
+    mov r5, (r2) ; write word back to screen
+
+    add #SCREEN_WIDTH_B, r2 ; next screen row
+    add @arg1, r2 ; next bitmap row
+    sob r1, centerTopShift
+
+    inc @arg0 ; next bitmap column
+    mov @arg0, r0 ; restore bitmap pointer in to r0
+
+    add #2, @scratch9 ; next screen column
+    mov @scratch9, r2 ; restore screen pointer
+
+    com sp ; invert to clear the left side of the screen word
+    bic #1111111100000000, sp ; but don't clear the screen word high bits
+
+    mov scratch6, r1 ; restore height
+rightStripLoopTop:
+    movb (r0), r4 ; get bitmap byte
+    ash r3, r4 ; shift byte left
+    bic #1111111100000000, r4 ; clear high bits
+
+    mov (r2), r5 ; get screen word
+
+    bic sp, r5 ; clear bits
+    bis r4, r5 ; set bitmap bits in to screen word
+
+    mov r5, (r2) ; write back to screen
+
+    add #SCREEN_WIDTH_B, r2 ; update screen pointer
+    add @arg1, r0 ; update bitmap pointer
+    sob r1, rightStripLoopTop
+
+centerStripEndCheck:
+
+
+doneTop:
+    ; restore sp
+    mov @scratch5, sp
+    rts
+
+start:
+    mov #16382, sp
+    ;mov sp, 27476  ; Move stack to nearly end of RAM
+
+    ;call @#INITRAM ; OS initialisation
+
+
+mainloop:
+    mov 0, @#bitmapx
+    
+loop:
+    mov #bitmap, r0
+    mov #16, r1
+    mov #16, r2
+    mov @#bitmapx, r3
+    mov #20, r4
+    jsr #drawbitmap
+
+    inc @#bitmapx
+    cmp @#bitmapx, #SCREEN_WIDTH-16
+    bge loop
+
+    br mainloop
+
+bitmap:
+    .word ^B0000011111100000
+    .word ^B0001100000011000
+    .word ^B0010000000000100
+    .word ^B0100000000000010
+    .word ^B0100110000110010
+    .word ^B1000110000110001
+    .word ^B1000000000000001
+    .word ^B1000000000000001
+    .word ^B1000000000000001
+    .word ^B1000000000000001
+    .word ^B1001100000011001
+    .word ^B0101110000111010
+    .word ^B0100111111110010
+    .word ^B0010001111000100
+    .word ^B0001100000011000
+    .word ^B0000011111100000
+
+.EVEN
+
+endOfProgram: ; must not go beyond 10KB
+; This area will be memory values.
+; even if these get cut off by the 10KB memory card limit, they'll be initialized elsewhere anyway
+
+; 2 screen pages
+screen0:
+    .blkb SCREEN_SIZE_B
+screen1:
+    .blkb SCREEN_SIZE_B
+
+; state variables
+bitmapX:
+    .word 0
+
+endOfRAM: ; must not go beyond 16KB
+
+.IF GT endOfProgram-10240
+.ERROR endOfProgram ; Program and data size extends beyond the 10KB SMP ROM size
+.ENDC
+
+.IF GT endOfRAM-16384
+.ERROR endOfRAM ; Program, data and memory space extends beyond the 16KB RAM space
+.ENDC
