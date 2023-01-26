@@ -9,7 +9,7 @@ macro11:
 	cp MACRO11/src/macro11 macro11
 
 $(OBJECTS): %.obj: %.mac
-	./macro11 -yus -ysl 64 $? -o $@
+	./macro11 -l /dev/stdout -yus -ysl 64 $? -o $@
 
 $(TARGET): $(OBJECTS)
 	./obj2bin.pl -rt11 --binary --nocrc --bytes=100000 --outfile=$@ $^

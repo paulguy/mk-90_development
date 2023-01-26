@@ -67,9 +67,11 @@ loaderClearScreenLoop:
 	clr	(r4)+
 	sob	r3, loaderClearScreenLoop
 
+    mov #16384, sp
+
 	mov	#screen0, @#LCDINA
 	mov #^B1000100011000110, @#LCDINB	;26Hz
-	
+
 	;Loader copyed from Game of Life app of Piotr Piatek
     ;Which I copied again from the T-Rex game
 	; specify the SMP address
@@ -103,6 +105,7 @@ nxtb:
 	;mov	#^O000, -(sp)	;user mode, interrupts enable
 	mov	#start, -(sp)
 	rti
+
 endOfLoader:
     .PRINT endOfLoader ; Loader Size
 
@@ -117,215 +120,255 @@ drawBitmap:
     ; arg3 - X position
     ; arg4 - Y position
 
+    mov #^B1010101010101010, @#screen0+SCREEN_WIDTH_B
+    mov #^B1010101010101010, @#screen0+SCREEN_WIDTH_B+2
+    mov #^B1010101010101010, @#screen0+SCREEN_WIDTH_B+4
+    mov #^B1010101010101010, @#screen0+SCREEN_WIDTH_B+6
     ; figure out if the bitmap starts on the top or bottom of the screen split
-    mov @arg4, r0
+    mov @#arg4, r0
     cmp #SCREEN_HEIGHT/2, r0
-    bge bitmapStartsBottom
+    blt bitmapStartsBottom
 
 ; bitmap starts at top
     ; figure out if the sprite crosses the split and by how much
-    add @arg2, r0
+    add @#arg2, r0
     sub #SCREEN_HEIGHT/2, r0
     bge bitmapCrossesSplit
 
 ; bitmap is entirely on top
-    mov @arg2, r1 ; get the full height of the sprite
+    mov @#arg2, r1 ; get the full height of the sprite
 
     ; do bitmap copy for top of screen (low bits)
+    jsr pc, copyBitmapTop
 
-    rts
+    rts pc
 
 bitmapCrossesSplit:
-    mov @arg2, r1
+    mov @#arg2, r1
     sub r0, r1 ; get how much of the sprite is on the top of the screen
-    mov r1, @arg2 ; save remaining since we don't need it anymore, so r0 can be used
+    mov r0, @#arg2 ; save remaining since we don't need it anymore, so r0 can be used
 
     ; do bitmap copy for top of screen
+    jsr pc, copyBitmapTop
 
-    mov @arg2, r1
+    mov @#arg2, r1
 bitmapStartsBottom:
 
     ; do bitmap copy for bottom of screen (high bits)
 
-    rts
+    rts pc
 
 copyBitmapTop:
     ; r1 - height to copy
 
     ; save sp to get an extra register
-    mov sp, @scratch5
+    mov sp, @#scratch5
     ; save r1 because it'll be used with sob
-    mov r1, @scratch6
-    ; copy pointer to bitmap so it can be updated
-    mov @arg0, @scratch7
+    mov r1, @#scratch6
     ; copy width so it can be iterated over
-    mov @arg1, @scratch8
+    mov @#arg1, @#scratch8
 
     ; calculate pointer to first screen byte
-    mov @arg4, r2
-    mul #SCREEN_WIDTH_B, r2
+    mov @#arg4, r3
+    mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
+    add #screen0, r3
 
-    mov @arg3, r3 ; get X offset and convert it to a byte offset by chopping off 3 bits
-    asr r3
-    asr r3
-    asr r3
-    add r3, r2 ; add X offset to screen start pointer
+    mov @#arg3, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    asr r2
+    asr r2
+    asr r2
+    add r2, r3 ; add X offset to screen start pointer
 
-    mov r2, @scratch9 ; save the screen pointer too
+    mov r3, @#scratch9 ; save the screen pointer too
 
-    mov @scratch7, r0 ; get first pointer to bitmap
+    mov @#arg0, r0 ; get first pointer to bitmap
 
-    mov @arg3, r3 ; get how shifted right the value is by keeping the low 3 bits
-    bic #1111111111111000, r3
+    mov @#arg3, r2 ; get how shifted right the value is by keeping the low 3 bits
+    bic #^B1111111111111000, r2
+
+    beq centerStripSimpleLoopTop ; take simple path if aligned
 
     ; get a bit mask to clear from the screen word
-    mov #0000000011111111, sp
+    mov #^B0000000011111111, sp
 copyTopShift:
     asr sp
-    sob r3, copyTopShift
+    sob r2, copyTopShift
 
-    beq centerStripLoopTop ; skip left strip if mask is 0
+    dec @#scratch8 ; 1 less center strip if unaligned to bytes
 
 leftStripLoopTop:
     movb (r0), r4 ; get bitmap byte
-    bic #1111111100000000, r4 ; clear high bits
-    mov r3, r5 ; get shift amount
+    bic #^B1111111100000000, r4 ; clear high bits
+    mov r2, r5 ; get shift amount
 leftTopShift: ; shift bitmap bits right
     asr r4 
     sob r5, leftTopShift
     
-    mov (r2), r5 ; get screen word
+    mov (r3), r5 ; get screen word
 
     bic sp, r5 ; clear bits
     bis r4, r5 ; set bitmap bits in to screen word
 
-    mov r5, (r2) ; write back to screen
+    mov r5, (r3) ; write back to screen
 
-    add #SCREEN_WIDTH_B, r2 ; next screen row
-    add @arg1, r0 ; next bitmap row, ran out of registers
+    add #SCREEN_WIDTH_B, r3 ; next screen row
+    add @#arg1, r0 ; next bitmap row, ran out of registers
     sob r1, leftStripLoopTop
 
-    mov @arg0, r0 ; restore bitmap pointer in to r0
+    mov @#arg0, r0 ; restore bitmap pointer in to r0
     ; bitmap pointer stays the same because the right side of the
     ; leftmost byte is used for the leftmost center column
 
-    add #2, @scratch9 ; next screen column
-    mov @scratch9, r2 ; restore screen pointer
+    add #2, @#scratch9 ; next screen column
+    mov @#scratch9, r3 ; restore screen pointer
 
     com sp ; invert to clear the left side of the screen word
-    bic #1111111100000000, sp ; but don't clear the screen word high bits
+    bic #^B1111111100000000, sp ; but don't clear the screen word high bits
 
-    mov scratch6, r1 ; restore height
+    mov @#scratch6, r1 ; restore height
+
+    cmp @#scratch8, 0 ; skip center strips if there are none
+    beq rightStripLoopTop
 
 centerStripLoopTop:
     inc r0 ; get right byte first so r5 is free later
 
-    movb (r0)-, r4 ; get right bitmap byte
-    bic #1111111100000000, r4 ; clear high bits
+    movb (r0), r4 ; get right bitmap byte
+    dec r0 ; point to left bitmap byte
+    bic #^B1111111100000000, r4 ; clear high bits
 
-    mov r3, r5 ; get shift amount (r5 is used here)
+    mov r2, r5 ; get shift amount (r5 is used here)
 centerTopShift: ; shift bitmap bits
     asr r4 
     sob r5, leftTopShift
 
     movb (r0), r5 ; get left bitmap byte
 
-    sub #8, r3 ; get how far left to shift
-    neg r3
-    ash r3, r5 ; shift byte left
-    sub #8, r3 ; restore right shift value
-    neg r3
+    sub #8, r2 ; get how far left to shift
+    neg r2
+    ash r2, r5 ; shift byte left
+    sub #8, r2 ; restore right shift value
+    neg r2
 
-    bic #1111111100000000, r5 ; clear high bits
+    bic #^B1111111100000000, r5 ; clear high bits
 
     bis r5, r4 ; combine left byte in to right byte
 
-    mov (r2), r5 ; get screen word
+    mov (r3), r5 ; get screen word
 
-    bic #0000000011111111, r5 ; clear low bits
+    bic #^B0000000011111111, r5 ; clear low bits
     bis r4, r5 ; write bitmap in to screen word
 
-    mov r5, (r2) ; write word back to screen
+    mov r5, (r3) ; write word back to screen
 
-    add #SCREEN_WIDTH_B, r2 ; next screen row
-    add @arg1, r2 ; next bitmap row
-    sob r1, centerTopShift
+    add #SCREEN_WIDTH_B, r3 ; next screen row
+    add @#arg1, r0 ; next bitmap row
+    sob r1, centerStripLoopTop
 
-    inc @arg0 ; next bitmap column
-    mov @arg0, r0 ; restore bitmap pointer in to r0
+    inc @#arg0 ; next bitmap column
+    mov @#arg0, r0 ; restore bitmap pointer in to r0
 
-    add #2, @scratch9 ; next screen column
-    mov @scratch9, r2 ; restore screen pointer
+    add #2, @#scratch9 ; next screen column
+    mov @#scratch9, r3 ; restore screen pointer
+
+    mov @#scratch6, r1 ; restore height
+
+    dec @#scratch8
+    bne centerStripLoopTop ; loop until mo more center strips
 
     com sp ; invert to clear the left side of the screen word
-    bic #1111111100000000, sp ; but don't clear the screen word high bits
+    bic #^B1111111100000000, sp ; but don't clear the screen word high bits
 
-    mov scratch6, r1 ; restore height
 rightStripLoopTop:
     movb (r0), r4 ; get bitmap byte
-    ash r3, r4 ; shift byte left
-    bic #1111111100000000, r4 ; clear high bits
+    ash r2, r4 ; shift byte left
+    bic #^B1111111100000000, r4 ; clear high bits
 
-    mov (r2), r5 ; get screen word
+    mov (r3), r5 ; get screen word
 
     bic sp, r5 ; clear bits
     bis r4, r5 ; set bitmap bits in to screen word
 
-    mov r5, (r2) ; write back to screen
+    mov r5, (r3) ; write back to screen
 
-    add #SCREEN_WIDTH_B, r2 ; update screen pointer
-    add @arg1, r0 ; update bitmap pointer
+    add #SCREEN_WIDTH_B, r3 ; update screen pointer
+    add @#arg1, r0 ; update bitmap pointer
     sob r1, rightStripLoopTop
 
-centerStripEndCheck:
+    br stripLoopReturn
 
+centerStripSimpleLoopTop:
+    movb (r0), r4 ; get bitmap byte
 
-doneTop:
+    bic #^B1111111100000000, r4 ; clear high bits
+
+    mov (r3), r5 ; get screen word
+
+    bic #^B0000000011111111, r5 ; clear low bits
+    bis r4, r5 ; write bitmap in to screen word
+
+    mov r5, (r3) ; write word back to screen
+
+    add #SCREEN_WIDTH_B, r3 ; next screen row
+    add @#arg1, r0 ; next bitmap row
+    sob r1, centerStripSimpleLoopTop
+
+    inc @#arg0 ; next bitmap column
+    mov @#arg0, r0 ; restore bitmap pointer in to r0
+
+    add #2, @#scratch9 ; next screen column
+    mov @#scratch9, r3 ; restore screen pointer
+
+    mov @#scratch6, r1 ; restore height
+
+    dec @#scratch8
+    bne centerStripSimpleLoopTop ; loop until mo more center strips
+
+stripLoopReturn:
     ; restore sp
-    mov @scratch5, sp
-    rts
+    mov @#scratch5, sp
+    rts pc
 
 start:
-    mov #16382, sp
-    ;mov sp, 27476  ; Move stack to nearly end of RAM
-
-    ;call @#INITRAM ; OS initialisation
-
+    mov #^B1111111100000000, @#screen0
 
 mainloop:
-    mov 0, @#bitmapx
+    mov #0, @#bitmapx
     
 loop:
-    mov #bitmap, r0
-    mov #16, r1
-    mov #16, r2
-    mov @#bitmapx, r3
-    mov #20, r4
-    jsr #drawbitmap
+    mov #bitmap, @#arg0
+    mov #2, @#arg1
+    mov #16, @#arg2
+    mov @#bitmapx, @#arg3
+    mov #2, @#arg4
+
+    mov @#bitmapx, @#screen0
+    jsr pc, drawbitmap
 
     inc @#bitmapx
     cmp @#bitmapx, #SCREEN_WIDTH-16
-    bge loop
+    blt loop
 
     br mainloop
 
+; byte reads proceed 1, 0, 3, 2, 5, 4, ....
 bitmap:
-    .word ^B0000011111100000
+    .word ^B1110000000000111
     .word ^B0001100000011000
-    .word ^B0010000000000100
-    .word ^B0100000000000010
-    .word ^B0100110000110010
-    .word ^B1000110000110001
-    .word ^B1000000000000001
-    .word ^B1000000000000001
-    .word ^B1000000000000001
-    .word ^B1000000000000001
-    .word ^B1001100000011001
-    .word ^B0101110000111010
-    .word ^B0100111111110010
-    .word ^B0010001111000100
+    .word ^B0000010000100000
+    .word ^B0000001001000000
+    .word ^B0011001001001100
+    .word ^B0011000110001100
+    .word ^B0000000110000000
+    .word ^B0000000110000000
+    .word ^B0000000110000000
+    .word ^B0000000110000000
+    .word ^B0001100110011000
+    .word ^B0011101001011100
+    .word ^B1111001001001111
+    .word ^B1100010000100011
     .word ^B0001100000011000
-    .word ^B0000011111100000
+    .word ^B1110000000000111
 
 .EVEN
 
@@ -347,8 +390,12 @@ endOfRAM: ; must not go beyond 16KB
 
 .IF GT endOfProgram-10240
 .ERROR endOfProgram ; Program and data size extends beyond the 10KB SMP ROM size
+.IFF
+.PRINT endOfProgram ; Program and Data Size
 .ENDC
 
 .IF GT endOfRAM-16384
 .ERROR endOfRAM ; Program, data and memory space extends beyond the 16KB RAM space
+.IFF
+.PRINT endOfRAM ; Program, Data and Memory Size
 .ENDC
