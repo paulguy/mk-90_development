@@ -1,0 +1,498 @@
+    ; Some code and ideas taken from
+    ; https://github.com/vladkorotnev/SMPEmu/blob/master/pdp/pdpfw.mac  and
+    ; https://github.com/azya52/MK90/blob/master/TRex/trex.mac
+
+	.ENABL AMA 	; Absolute addressing
+	.ASECT		; Absolute section
+    .RADIX 10
+
+	.= 0		; Beginning of cartridge
+    nop ; seems to be needed
+    br loader
+
+    .= 32 ; a bunch of interrupt vectors seem to be before here
+scratch: ; this can be used as memory after things are loaded
+
+    arg = scratch ; 162 bytes from here until the keyboard interrupt vector
+    ; use as scratch space since the loader is not needed after initial bootup
+
+	;	----------------------------------
+	;	 OS Procedures and Vars
+	;	----------------------------------
+
+    PRINTATTRS = ^O34072
+    PRINTNUM = ^O153360 ; arg. r3
+    PRINT = ^O153414 ; arg. r1
+    INITRAM = ^O153700
+    INITTTY = ^O120536
+    LCDINA = ^O164000
+    LCDINB = ^O164002
+    WAITCOMM = ^O174506
+    SMPCMD = ^O164026
+    SMPBAUD = ^O164022
+    SMPCS = ^O164024
+    SMPIO = ^O164020
+    GETCH = ^O131120
+    PUTCH = ^O116542
+
+    BOOTBLOCK_SIZE = 510 ; you'd think it'd be 512 but I guess not?
+
+    SCREEN_WIDTH_B = 30
+    SCREEN_WIDTH_W = SCREEN_WIDTH_B/2
+    SCREEN_SIZE_B = 960
+    SCREEN_SIZE_W = SCREEN_SIZE_B/2
+    SCREEN_HEIGHT = 64
+    SCREEN_WIDTH = 120
+
+loader:
+	mov #endOfProgram, r4
+	mov	#endOfRAM-endOfProgram, r3
+loaderClearScreenLoop:
+	clr	(r4)+
+	sob	r3, loaderClearScreenLoop
+
+    mov #16384, sp
+
+	mov	#screen0, @#LCDINA
+	mov #^B1000100011000110, @#LCDINB	;26Hz
+
+	;Loader copyed from Game of Life app of Piotr Piatek
+    ;Which I copied again from the T-Rex game
+	; specify the SMP address
+	mtps #^O340		;disable interrupts
+	bis	#8, r5		;writing to the SMP
+	mov	r5,(r1)
+	mov	#^O240, @#SMPCMD	;Write Address
+	jsr	pc,(r2)
+	movb #BOOTBLOCK_SIZE/256, @#SMPIO	;high address byte
+	jsr	pc,(r2)
+	movb #BOOTBLOCK_SIZE&255, @#SMPIO	;low address byte
+	jsr	pc, (r2)
+	tst	@#SMPCMD
+	jsr	pc, (r2)
+	; load data
+	mov	#endOfProgram-BOOTBLOCK_SIZE, r4		;number of bytes
+	mov	#BOOTBLOCK_SIZE, r3
+	mov	#^O320, @#SMPCMD	;Read Postincrement
+	jsr	pc, (r2)
+	bic	#8, r5		;reading from the SMP
+	mov	r5, (r1)
+	jsr	pc, (r2)
+nxtb:	
+	movb @#SMPIO, (r3)+	;read data byte from the SMP to the RAM
+	jsr	pc, (r2)
+	sob	r4, nxtb		;next data byte
+	tst	@#SMPCMD
+	jsr	pc, (r2)
+	; start the loaded program
+	mov	#^O000, -(sp)	;user mode, interrupts enable
+	mov	#start, -(sp)
+	rti
+
+    .blkb 14 ; push the keyboard interrupt vector as far to the end as possible
+
+keyIntHandle:
+    mtps #^O340
+    mov r0, -(sp)
+    mov r1, -(sp)
+
+    mov #SMPBAUD, r1
+    mov #8, (r1)+ ;@#SMPBAUD
+    mov r1, r0
+    mov #^B11100010, (r1)+ ;@#SMPCS
+    clr (r1);@#SMPCMD
+waitGetKey:
+    tstb (r0) ;@#SMPCS
+    bpl waitGetKey
+    mov (r1), @#inkey
+
+    mov (sp)+, r1
+    mov (sp)+, r0
+    rti
+
+    .= 200 ; Location of KBCU IV
+    .word	keyIntHandle, 0000
+
+drawBitmap:
+    ; Draw a bitmap to the screen
+    bcopy_data = arg ; pointer to data
+    bcopy_h = arg+2 ; height in lines
+    bcopy_x = arg+4 ; X position
+    bcopy_y = arg+6 ; Y position
+    bcopy_remaining_rows = scratch+8
+    bcopy_remaining_columns = scratch+10
+    bcopy_screen_pointer = scratch+12
+    bcopy_temp = scratch+14
+    bcopy_split_rows = scratch+16
+    bcopy_orig_data = scratch+18
+    bcopy_sp = scratch+20
+
+    ; TODO: clip sprites that go offscreen
+    ; Possible size optimization if needed: runtime modify the swab r5 lines
+    ; with nop or swab r5 depending on whether top or bottom is being drawn
+    ; to to save space on mostly repetitive code.
+
+    ; figure out if the bitmap starts on the top or bottom of the screen split
+    mov @#bcopy_y, r0
+    cmp r0, #SCREEN_HEIGHT/2
+    bge bitmapStartsBottom
+
+; bitmap starts at top
+    ; figure out if the sprite crosses the split and by how much
+    add @#bcopy_h, r0
+    sub #SCREEN_HEIGHT/2, r0
+    bgt bitmapCrossesSplit
+
+; bitmap is entirely on top
+    mov @#bcopy_h, r1 ; get the full height of the sprite
+
+    ; do bitmap copy for top of screen (low bits)
+    jsr pc, copyBitmapTop
+
+    rts pc
+
+bitmapCrossesSplit:
+    mov @#bcopy_h, r1
+    sub r0, r1 ; r0 will have the number of lines over the split
+    mov r0, @#bcopy_h ; save remaining since we don't need the old value, so r0 can be used
+    mov r1, @#bcopy_split_rows
+    mov @#bcopy_data, @#bcopy_orig_data
+
+    ; do bitmap copy for top of screen
+    jsr pc, copyBitmapTop
+
+    add @#bcopy_split_rows, @#bcopy_orig_data
+    mov @#bcopy_orig_data, @#bcopy_data
+    mov #SCREEN_HEIGHT/2, @#bcopy_y ; continue from split
+
+bitmapStartsBottom:
+    mov @#bcopy_h, r1 ; get/restore remaining lines
+    sub #SCREEN_HEIGHT/2, @#bcopy_y ; bottom half of the screen is high bytes of the same memory space
+
+    ; do bitmap copy for bottom of screen (high bits)
+    jsr pc, copyBitmapBottom
+
+    rts pc
+
+copyBitmapTop:
+    ; r1 - height to copy
+    
+    ; save r1 because it'll be used with sob
+    mov r1, @#bcopy_remaining_rows
+
+    ; calculate pointer to first screen byte
+    mov @#bcopy_y, r3
+    mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
+    add @#scrptr, r3
+
+    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    asr r2
+    asr r2
+    asr r2
+    asl r2 ; each 8 pixels on screen is 1 word apart
+    add r2, r3 ; add X offset to screen start pointer
+
+    mtps #^B11100000 ; avoid SP being used
+    mov sp, @#bcopy_sp
+    mov r3, sp ; SP can't have the 1 bit set but the screen pointer shouldn't need it?
+
+    mov r3, @#bcopy_screen_pointer ; save the screen pointer too
+
+    mov @#bcopy_data, r0 ; get first pointer to bitmap
+
+    mov @#bcopy_x, r2 ; get how shifted right the value is by keeping the low 3 bits
+    bic #^B1111111111111000, r2
+
+    beq centerStripSimpleLoopTopStart ; take simple path if aligned
+
+    mov r2, r5
+    ; get a bit mask to clear from the screen word
+    mov #^B0000000011111111, r3
+copyTopShift:
+    asr r3
+    sob r5, copyTopShift
+
+leftStripLoopTop:
+    movb (r0)+, r4 ; get bitmap byte
+    bic #^B1111111100000000, r4 ; clear high bits so asr doesn't sign-extend
+    movb r2, r5 ; get shift amount
+leftTopShift: ; shift bitmap bits right
+    asr r4 
+    sob r5, leftTopShift
+    
+    mov (sp), r5 ; get screen word
+
+    bicb r3, r5 ; clear bits
+    bisb r4, r5 ; set bitmap bits in to screen word
+
+    mov r5, (sp) ; write back to screen
+
+    add #SCREEN_WIDTH_B, sp ; next screen row
+    sob r1, leftStripLoopTop
+
+    mov @#bcopy_data, r0 ; restore bitmap pointer in to r0
+
+    add #2, @#bcopy_screen_pointer ; next screen column
+    mov @#bcopy_screen_pointer, sp ; restore screen pointer
+
+    mov @#bcopy_remaining_rows, r1 ; restore height
+
+    comb r3
+    sub #8, r2 ; convert left shift in to right shift
+    neg r2
+
+rightStripLoopTop:
+    movb (r0)+, r4 ; get bitmap byte
+    ash r2, r4 ; shift byte left, ash ignores high bits?
+    bic #^B1111111100000000, r4 ; clear high bits
+
+    mov (sp), r5 ; get screen word
+
+    bicb r3, r5 ; clear bits
+    bisb r4, r5 ; set bitmap bits in to screen word
+
+    mov r5, (sp) ; write back to screen
+
+    add #SCREEN_WIDTH_B, sp ; update screen pointer
+    sob r1, rightStripLoopTop
+
+    mov @#bcopy_sp, sp
+    mtps #^B00000000
+    rts pc
+
+centerStripSimpleLoopTopStart:
+    mov #^B0000000011111111, r3
+    mov #SCREEN_WIDTH_B, r2
+centerStripSimpleLoopTop:
+    movb (r0)+, r4 ; get bitmap byte
+
+    mov (sp), r5 ; get screen word
+
+    bic r3, r5 ; clear low bits
+    bisb r4, r5 ; write bitmap in to screen word
+
+    mov r5, (sp) ; write word back to screen
+
+    add r2, sp ; next screen row
+    sob r1, centerStripSimpleLoopTop
+
+    mov @#bcopy_sp, sp
+    mtps #^B00000000
+    rts pc
+
+copyBitmapBottom:
+    ; r1 - height to copy
+    
+    ; save r1 because it'll be used with sob
+    mov r1, @#bcopy_remaining_rows
+
+    ; calculate pointer to first screen byte
+    mov @#bcopy_y, r3
+    mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
+    add @#scrptr, r3
+
+    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    asr r2
+    asr r2
+    asr r2
+    asl r2 ; each 8 pixels on screen is 1 word apart
+    add r2, r3 ; add X offset to screen start pointer
+
+    mtps #^B11100000 ; avoid SP being used
+    mov sp, @#bcopy_sp
+    mov r3, sp ; SP can't have the 1 bit set but the screen pointer shouldn't need it?
+
+    mov r3, @#bcopy_screen_pointer ; save the screen pointer too
+
+    mov @#bcopy_data, r0 ; get first pointer to bitmap
+
+    mov @#bcopy_x, r2 ; get how shifted right the value is by keeping the low 3 bits
+    bic #^B1111111111111000, r2
+
+    beq centerStripSimpleLoopBottomStart ; take simple path if aligned
+
+    mov r2, r5
+    ; get a bit mask to clear from the screen word
+    mov #^B0000000011111111, r3
+copyBottomShift:
+    asr r3
+    sob r5, copyBottomShift
+
+leftStripLoopBottom:
+    movb (r0)+, r4 ; get bitmap byte
+    bic #^B1111111100000000, r4 ; clear high bits so asr doesn't sign-extend
+    movb r2, r5 ; get shift amount
+leftBottomShift: ; shift bitmap bits right
+    asr r4 
+    sob r5, leftBottomShift
+    
+    mov (sp), r5 ; get screen word
+    swab r5
+
+    bicb r3, r5 ; clear bits
+    bisb r4, r5 ; set bitmap bits in to screen word
+
+    swab r5
+    mov r5, (sp) ; write back to screen
+
+    add #SCREEN_WIDTH_B, sp ; next screen row
+    sob r1, leftStripLoopBottom
+
+    mov @#bcopy_data, r0 ; restore bitmap pointer in to r0
+
+    add #2, @#bcopy_screen_pointer ; next screen column
+    mov @#bcopy_screen_pointer, sp ; restore screen pointer
+
+    mov @#bcopy_remaining_rows, r1 ; restore height
+
+    comb r3
+    sub #8, r2 ; convert left shift in to right shift
+    neg r2
+
+rightStripLoopBottom:
+    movb (r0)+, r4 ; get bitmap byte
+    ash r2, r4 ; shift byte left, ash ignores high bits?
+    bic #^B1111111100000000, r4 ; clear high bits
+
+    mov (sp), r5 ; get screen word
+    swab r5
+
+    bicb r3, r5 ; clear bits
+    bisb r4, r5 ; set bitmap bits in to screen word
+
+    swab r5
+    mov r5, (sp) ; write back to screen
+
+    add #SCREEN_WIDTH_B, sp ; update screen pointer
+    sob r1, rightStripLoopBottom
+
+    mov @#bcopy_sp, sp
+    mtps #^B00000000
+    rts pc
+
+centerStripSimpleLoopBottomStart:
+    mov #^B0000000011111111, r3
+    mov #SCREEN_WIDTH_B, r2
+centerStripSimpleLoopBottom:
+    movb (r0)+, r4 ; get bitmap byte
+
+    mov (sp), r5 ; get screen word
+    swab r5
+
+    bic r3, r5 ; clear low bits
+    bisb r4, r5 ; write bitmap in to screen word
+
+    swab r5
+    mov r5, (sp) ; write word back to screen
+
+    add r2, sp ; next screen row
+    sob r1, centerStripSimpleLoopBottom
+
+    mov @#bcopy_sp, sp
+    mtps #^B00000000
+    rts pc
+
+start:
+    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
+    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
+    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
+    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
+    mov #0, @#bitmapx
+    mov #2, @#bitmapy
+    mov #1, @#bitmapXDir
+    mov #1, @#bitmapYDir
+    mov #screen0, @#scrptr
+
+loop:
+    mov #bitmap, @#bcopy_data
+    mov #10, @#bcopy_h
+    mov @#bitmapx, @#bcopy_x
+    mov @#bitmapy, @#bcopy_y
+    jsr pc, drawbitmap
+
+    cmp @#scrptr, #screen0
+    beq flipscr1
+    mov #screen1, @#LCDINA
+	mov	#screen0, @#scrptr
+    br noflipscr1
+flipscr1:
+    mov #screen0, @#LCDINA
+	mov	#screen1, @#scrptr
+noflipscr1:
+    
+    add @#bitmapXDir, @#bitmapx
+    cmp @#bitmapx, #SCREEN_WIDTH-8
+    bgt negXDir
+    cmp @#bitmapx, #0
+    blt negXDir
+    br noNegXDir
+negXDir:
+    neg @#bitmapXDir
+    add @#bitmapXDir, @#bitmapx
+noNegXDir:
+
+    add @#bitmapYDir, @#bitmapy
+    cmp @#bitmapy, #SCREEN_HEIGHT-10
+    bgt negYDir
+    cmp @#bitmapy, #0
+    blt negYDir
+    br noNegYDir
+negYDir:
+    neg @#bitmapYDir
+    add @#bitmapYDir, @#bitmapy
+noNegYDir:
+
+    br loop
+
+bitmap:
+    .byte ^B01111110
+    .byte ^B10000001
+    .byte ^B10100101
+    .byte ^B10100101
+    .byte ^B10000001
+    .byte ^B10000001
+    .byte ^B10111101
+    .byte ^B10011001
+    .byte ^B10000001
+    .byte ^B01111110
+
+.EVEN
+
+endOfProgram: ; must not go beyond 10KB
+; This area will be memory values.
+; even if these get cut off by the 10KB memory card limit, they'll be initialized elsewhere anyway
+
+; 2 screen pages
+screen0:
+    .blkb SCREEN_SIZE_B
+screen1:
+    .blkb SCREEN_SIZE_B
+scrptr:
+    .word 0
+inkey:
+    .word 0
+
+; state variables
+bitmapX:
+    .word 0
+bitmapY:
+    .word 0
+bitmapXDir:
+    .word 0
+bitmapYDir:
+    .word 0
+
+endOfRAM: ; must not go beyond 16KB
+
+; no idea if these work, they don't seem to print anything at least, but i'm probably misunderstanding something.
+.IF GT endOfProgram-10240
+.ERROR endOfProgram ; Program and data size extends beyond the 10KB SMP ROM size
+.IFF
+.PRINT endOfProgram ; Program and Data Size
+.ENDC
+
+.IF GT endOfRAM-16384
+.ERROR endOfRAM ; Program, data and memory space extends beyond the 16KB RAM space
+.IFF
+.PRINT endOfRAM ; Program, Data and Memory Size
+.ENDC
