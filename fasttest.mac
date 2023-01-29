@@ -405,7 +405,7 @@ start:
 
 loop:
     mov #bitmap, @#bcopy_data
-    mov #10, @#bcopy_h
+    mov #bitmap_H, @#bcopy_h
     mov @#bitmapx, @#bcopy_x
     mov @#bitmapy, @#bcopy_y
     jsr pc, drawbitmap
@@ -421,7 +421,7 @@ flipscr1:
 noflipscr1:
     
     add @#bitmapXDir, @#bitmapx
-    cmp @#bitmapx, #SCREEN_WIDTH-8
+    cmp @#bitmapx, #SCREEN_WIDTH-STRIP_W
     bgt negXDir
     cmp @#bitmapx, #0
     blt negXDir
@@ -432,7 +432,7 @@ negXDir:
 noNegXDir:
 
     add @#bitmapYDir, @#bitmapy
-    cmp @#bitmapy, #SCREEN_HEIGHT-10
+    cmp @#bitmapy, #SCREEN_HEIGHT-bitmap_H
     bgt negYDir
     cmp @#bitmapy, #0
     blt negYDir
@@ -444,6 +444,7 @@ noNegYDir:
 
     br loop
 
+STRIP_W = 8
 bitmap:
     .byte ^B01111110
     .byte ^B10000001
@@ -455,6 +456,7 @@ bitmap:
     .byte ^B10011001
     .byte ^B10000001
     .byte ^B01111110
+bitmap_H = 10
 
 .EVEN
 

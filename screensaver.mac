@@ -249,7 +249,7 @@ leftTopShift: ; shift bitmap bits right
     mov @#bcopy_remaining_rows, r1 ; restore height
 
     tst @#bcopy_remaining_columns ; skip center strips if there are none
-    beq rightStripLoopTop
+    beq rightStripLoopTopStart
 
 centerStripLoopTop:
     inc r0 ; get right byte first so r5 is free later
@@ -298,6 +298,7 @@ centerTopShift: ; shift bitmap bits
     dec @#bcopy_remaining_columns
     bne centerStripLoopTop ; loop until mo more center strips
 
+rightStripLoopTopStart:
     decb r2 ; get how far left to shift
     decb r2 ; without affecting the mask
     decb r2
@@ -438,7 +439,7 @@ leftBottomShift: ; shift bitmap bits right
     mov @#bcopy_remaining_rows, r1 ; restore height
 
     tst @#bcopy_remaining_columns ; skip center strips if there are none
-    beq rightStripLoopBottom
+    beq rightStripLoopBottomStart
 
 centerStripLoopBottom:
     inc r0 ; get right byte first so r5 is free later
@@ -489,6 +490,7 @@ centerBottomShift: ; shift bitmap bits
     dec @#bcopy_remaining_columns
     bne centerStripLoopBottom ; loop until mo more center strips
 
+rightStripLoopBottomStart:
     decb r2 ; get how far left to shift
     decb r2 ; without affecting the mask
     decb r2
@@ -571,9 +573,9 @@ start:
     mov #screen0, @#scrptr
 
 loop:
-    mov #bitmap, @#bcopy_data
-    mov #2, @#bcopy_w
-    mov #15, @#bcopy_h
+    mov #bitmap2, @#bcopy_data
+    mov #bitmap2_W, @#bcopy_w
+    mov #bitmap2_H, @#bcopy_h
     mov @#bitmapx, @#bcopy_x
     mov @#bitmapy, @#bcopy_y
 
@@ -589,7 +591,7 @@ flipscr1:
 noflipscr1:
     
     add @#bitmapXDir, @#bitmapx
-    cmp @#bitmapx, #SCREEN_WIDTH-16
+    cmp @#bitmapx, #SCREEN_WIDTH-bitmap2_PIXEL_W
     bgt negXDir
     cmp @#bitmapx, #0
     blt negXDir
@@ -600,7 +602,7 @@ negXDir:
 noNegXDir:
 
     add @#bitmapYDir, @#bitmapy
-    cmp @#bitmapy, #SCREEN_HEIGHT-15
+    cmp @#bitmapy, #SCREEN_HEIGHT-bitmap2_H
     bgt negYDir
     cmp @#bitmapy, #0
     blt negYDir
@@ -612,6 +614,7 @@ noNegYDir:
 
     br loop
 
+STRIP_W = 8
 bitmap:
     .byte ^B11111100, ^B01111110
     .byte ^B11001100, ^B01110011
@@ -628,6 +631,24 @@ bitmap:
     .byte ^B10101010, ^B10110101
     .byte ^B10101010, ^B10100101
     .byte ^B01001011, ^B00110010
+bitmap_W = 2
+bitmap_PIXEL_W = bitmap_W*STRIP_W
+bitmap_H = 15
+
+bitmap2:
+    .byte ^B01111110
+    .byte ^B10000001
+    .byte ^B10100101
+    .byte ^B10100101
+    .byte ^B10000001
+    .byte ^B10000001
+    .byte ^B10111101
+    .byte ^B10011001
+    .byte ^B10000001
+    .byte ^B01111110
+bitmap2_W = 1
+bitmap2_PIXEL_W = bitmap2_W*STRIP_W
+bitmap2_H = 10
 
 .EVEN
 
