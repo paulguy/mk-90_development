@@ -1,5 +1,5 @@
-OBJECTS = test.obj
-TARGET = test.bin
+OBJECTS = screensaver.obj
+TARGET = screensaver.bin
 SMP = smp0.bin
 
 all: macro11 $(SMP)
