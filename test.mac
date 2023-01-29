@@ -124,6 +124,13 @@ drawBitmap:
     bcopy_remaining_columns = scratch+12
     bcopy_screen_pointer = scratch+14
     bcopy_temp = scratch+16
+    bcopy_split_rows = scratch+18
+    bcopy_orig_data = scratch+20
+
+    ; TODO: clip sprites that go offscreen
+    ; Possible size optimization if needed: runtime modify the swab r5 lines
+    ; with nop or swab r5 depending on whether top or bottom is being drawn
+    ; to to save space on mostly repetitive code.
 
     ; figure out if the bitmap starts on the top or bottom of the screen split
     mov @#bcopy_y, r0
@@ -148,11 +155,17 @@ bitmapCrossesSplit:
     mov @#bcopy_h, r1
     sub r0, r1 ; r0 will have the number of lines over the split
     mov r0, @#bcopy_h ; save remaining since we don't need the old value, so r0 can be used
+    mov r1, @#bcopy_split_rows
+    mov @#bcopy_data, @#bcopy_orig_data
 
     ; do bitmap copy for top of screen
     jsr pc, copyBitmapTop
 
-    mov #SCREEN_HEIGHT, @#bcopy_y ; continue from split
+    mov @#bcopy_w, r1 ; skip rows already done
+    mul @#bcopy_split_rows, r1
+    add r1, @#bcopy_orig_data
+    mov @#bcopy_orig_data, @#bcopy_data
+    mov #SCREEN_HEIGHT/2, @#bcopy_y ; continue from split
 
 bitmapStartsBottom:
     mov @#bcopy_h, r1 ; get/restore remaining lines
@@ -174,7 +187,7 @@ copyBitmapTop:
     ; calculate pointer to first screen byte
     mov @#bcopy_y, r3
     mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
-    add #screen0, r3
+    add @#scrptr, r3
 
     mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
     asr r2
@@ -352,7 +365,7 @@ centerStripSimpleLoopTop:
 
 copyBitmapBottom:
     ; r1 - height to copy
-
+    
     ; save r1 because it'll be used with sob
     mov r1, @#bcopy_remaining_rows
     ; copy width so it can be iterated over
@@ -361,7 +374,7 @@ copyBitmapBottom:
     ; calculate pointer to first screen byte
     mov @#bcopy_y, r3
     mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
-    add #screen0, r3
+    add @#scrptr, r3
 
     mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
     asr r2
@@ -439,7 +452,7 @@ centerBottomShift: ; shift bitmap bits
     asr r4 
     sob r5, centerBottomShift
 
-    mov (r0), r5 ; get left bitmap byte
+    movb (r0), r5 ; get left bitmap byte
     bic #^B1111111100000000, r5 ; clear high bits
 
     sub #8, r2 ; get how far left to shift
@@ -451,7 +464,6 @@ centerBottomShift: ; shift bitmap bits
     bic #^B1111111100000000, r5 ; clear high bits
 
     bis r5, r4 ; combine left byte in to right byte
-    swab r4
 
     mov (r3), r5 ; get screen word
     swab r5
@@ -491,10 +503,9 @@ centerBottomShift: ; shift bitmap bits
     swab r2
 
 rightStripLoopBottom:
-    mov (r0), r4 ; get bitmap byte
+    movb (r0), r4 ; get bitmap byte
     ash r2, r4 ; shift byte left, ash ignores high bits?
     bic #^B1111111100000000, r4 ; clear high bits
-    swab r4
 
     mov (r3), r5 ; get screen word
     swab r5
@@ -517,7 +528,8 @@ centerStripSimpleLoopBottomStart:
     mov @#bcopy_w, r2 ; may as well use a register during the loop
     ; r2 normally has the shift amount which isn't meaningful here
 centerStripSimpleLoopBottom:
-    mov (r0), r4 ; get bitmap byte
+    movb (r0), r4 ; get bitmap byte
+
     bic #^B1111111100000000, r4 ; clear high bits
 
     mov (r3), r5 ; get screen word
@@ -546,15 +558,17 @@ centerStripSimpleLoopBottom:
 
     rts pc
 
+
 start:
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
     mov #0, @#bitmapx
-    mov #SCREEN_HEIGHT/2, @#bitmapy
+    mov #2, @#bitmapy
     mov #1, @#bitmapXDir
     mov #1, @#bitmapYDir
+    mov #screen0, @#scrptr
 
 loop:
     mov #bitmap, @#bcopy_data
@@ -563,9 +577,17 @@ loop:
     mov @#bitmapx, @#bcopy_x
     mov @#bitmapy, @#bcopy_y
 
-    mov @#bitmapx, @#screen0
     jsr pc, drawbitmap
-
+    cmp @#scrptr, #screen0
+    beq flipscr1
+    mov #screen1, @#LCDINA
+	mov	#screen0, @#scrptr
+    br noflipscr1
+flipscr1:
+    mov #screen0, @#LCDINA
+	mov	#screen1, @#scrptr
+noflipscr1:
+    
     add @#bitmapXDir, @#bitmapx
     cmp @#bitmapx, #SCREEN_WIDTH-16
     bgt negXDir
@@ -618,7 +640,8 @@ screen0:
     .blkb SCREEN_SIZE_B
 screen1:
     .blkb SCREEN_SIZE_B
-
+scrptr:
+    .word 0
 inkey:
     .word 0
 
