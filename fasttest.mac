@@ -44,6 +44,9 @@ scratch: ; this can be used as memory after things are loaded
     SCREEN_HEIGHT = 64
     SCREEN_WIDTH = 120
 
+    SCREEN_EXTRA_H = SCREEN_HEIGHT+7 ; add some scrollable region
+    SCREEN_PAGE = SCREEN_WIDTH_B*SCREEN_EXTRA_H
+
 loader:
 	mov #endOfProgram, r4
 	mov	#endOfRAM-endOfProgram, r3
@@ -392,6 +395,211 @@ centerStripSimpleLoopBottom:
     mtps #^B00000000
     rts pc
 
+drawTilemap:
+    tm_scrollx = arg ; X scroll px, must be 0-7
+    tm_scrolly = arg+2 ; Y scroll px, must be 0-7
+    tm_screen_pointer = scratch+4
+    tm_sp = scratch+6
+    tm_xpos = scratch+8
+    tm_ypos = scratch+10
+
+    mov @#tm_scrolly, r1 ; get last rows
+    add #SCREEN_HEIGHT/2, r1
+    mul #SCREEN_WIDTH_B, r1
+    sub #2, r1 ; get last screen word
+    add @#scrptr, r1
+    mov r1, @#tm_screen_pointer
+
+    mtps #^B11100000 ; save SP
+    mov sp, @#tm_sp
+
+    mov #SCREEN_TILES_W-1*2, @#tm_xpos ; get the last tile on the screen row
+
+    mov @#tm_scrollx, r2
+
+    bne tmNoSimpleStart
+    jmp tmSimpleStart ; take simple path if aligned
+tmNoSimpleStart:
+    mov #^B1111111111111111, @#screen0
+
+    add #2, @#tm_xpos ; start at the far right tile
+
+    mov r2, r4
+    ; get a bit mask to clear from the screen word
+    mov #^B0000000011111111, r3
+tmShift:
+    asr r3
+    sob r4, tmShift
+    mov r3, r4 ; copy mask low and high
+    swab r3
+    bis r4, r3
+    swab r3
+
+    sub #8, r2 ; convert to left shift
+    neg r2
+
+tmColumnLoop:
+    mov @#tm_screen_pointer, sp
+
+    mov #3, @#tm_ypos
+    tst @#tm_scrolly
+    beq tmNoExtraRowLeft
+    inc @#tm_ypos
+tmNoExtraRowLeft:
+
+    mov #8, r4 ; get remain of last tile
+    sub @#tm_scrolly, r4
+
+tmTileLeftLoop:
+    mov @#tm_ypos, r1 ; get index of top screen tile position
+    mul #SCREEN_MAP_W*2, r1
+    add @#tm_xpos, r1
+    mov r1, r0
+    mov screenMap(r1), r1 ; index to get pointer to tile data
+    add r4, r1 ; start at last line
+    inc r1 ; pre-decrement
+
+    add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
+    mov screenMap(r0), r0
+    add r4, r0
+    inc r0
+tmRowLeftLoop:
+    movb -(r0), r5 ; move high byte in to low byte
+    bic #^B1111111100000000, r5 ; mask sign extension
+    swab r5 ; swap high byte high
+    bisb -(r1), r5 ; mask value in low
+    ash r2, r5 ; shift left
+    bic r3, r5 ; mask out right side
+    mov r5, (sp) ; write to screen
+    sub #SCREEN_WIDTH_B, sp ; update screen pointer
+    sob r4, tmRowLeftLoop
+
+    mov #8, r4 ; reset tile row
+
+    dec @#tm_ypos ; next tile up
+    bpl tmTileLeftLoop
+
+; right side start
+    sub #8, r2 ; convert to right shift
+    neg r2
+    com r3
+    bic #^B0000000011111111, r3 ; fold r2 in to r3
+    bis r2, r3
+
+    mov @#tm_screen_pointer, sp
+
+    mov #3, @#tm_ypos
+    tst @#tm_scrolly
+    beq tmNoExtraRowRight
+    inc @#tm_ypos
+tmNoExtraRowRight:
+
+    mov #8, r4 ; get remain of last tile
+    sub @#tm_scrolly, r4
+
+tmTileRightLoop:
+    mov @#tm_ypos, r1 ; get index of top screen tile position
+    mul #SCREEN_MAP_W*2, r1
+    add @#tm_xpos, r1
+    inc r1 ; get righthand tile
+    mov r1, r0
+    mov screenMap(r1), r1 ; index to get pointer to tile data
+    add r4, r1 ; start at last line
+    inc r1 ; pre-decrement
+
+    add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
+    mov screenMap(r0), r0
+    add r4, r0
+    inc r0
+tmRowRightLoop:
+    movb -(r1), r5 ; move low byte in to low byte
+    bic #^B1111111100000000, r5 ; mask sign extension
+    swab r5 ; swap low byte high
+    bisb -(r0), r5 ; mask high value in low
+    movb r3, r2
+tmRowRightShiftLoop:
+    asr r5 ; shift right
+    sob r2, tmRowRightShiftLoop
+    swab r3 ; get mask low
+    bicb r3, r1 ; mask left side of bytes
+    swab r1 ; this will place the low byte back to the low position
+    bicb r3, r1
+    swab r3 ; get shift back low
+    mov r5, (sp) ; write to screen
+    sub #SCREEN_WIDTH_B, sp ; update screen pointer
+    sob r4, tmRowRightLoop
+
+    mov #8, r4 ; reset tile row
+
+    dec @#tm_ypos ; next tile up
+    bpl tmTileRightLoop
+
+    mov r3, r2 ; unfold r3 and r2
+    bic #^B1111111100000000, r2 ; remove mask from high byte
+    bic #^B0000000011111111, r3 ; remove shift from low byte
+    mov r3, r4 ; duplicate mask back in to low byte
+    swab r4
+    bis r4, r3
+
+    sub #8, r2 ; convert back to right shift
+    neg r2
+    com r3
+
+    sub #2, @#tm_screen_pointer ; next left column
+    sub #2, @#tm_xpos ; next column
+    bpl tmColumnLoop
+
+    mov @#tm_sp, sp ; restore SP
+    mtps #^B00000000
+    rts pc
+
+tmSimpleStart:
+tmColumnSimpleLoop:
+    mov @#tm_screen_pointer, sp
+
+    mov #3, @#tm_ypos
+    tst @#tm_scrolly
+    beq tmNoExtraRowSimple
+    inc @#tm_ypos
+tmNoExtraRowSimple:
+
+    mov #8, r4 ; get remain of last tile
+    sub @#tm_scrolly, r4
+
+tmTileSimpleLoop:
+    mov @#tm_ypos, r1 ; get index of top screen tile position
+    mul #SCREEN_MAP_W*2, r1
+    add @#tm_xpos, r1
+    mov r1, r0
+    mov screenMap(r1), r1 ; index to get pointer to tile data
+    add r4, r1 ; start at last line
+
+    add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
+    mov screenMap(r0), r0
+    add r4, r0
+tmRowSimpleLoop:
+    movb -(r0), r5 ; move high byte in to low byte
+    bic #^B1111111100000000, r5 ; mask sign extension
+    swab r5 ; swap high byte high
+    bisb -(r1), r5 ; mask value in low
+    mov r5, (sp) ; write to screen
+    sub #SCREEN_WIDTH_B, sp ; update screen pointer
+    sob r4, tmRowSimpleLoop
+
+    mov #8, r4 ; reset tile row
+
+    dec @#tm_ypos ; next tile up
+    bpl tmTileSimpleLoop
+
+    sub #2, @#tm_screen_pointer ; next left column
+    sub #2, @#tm_xpos ; next column
+    ;bpl tmColumnSimpleLoop
+    bne tmColumnSimpleLoop
+
+    mov @#tm_sp, sp ; restore SP
+    mtps #^B00000000
+    rts pc
+
 start:
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
@@ -401,9 +609,20 @@ start:
     mov #2, @#bitmapy
     mov #1, @#bitmapXDir
     mov #1, @#bitmapYDir
+    mov #0, @#bgX
+    mov #0, @#bgY
     mov #screen0, @#scrptr
 
 loop:
+    mov @#bitmapx, @#tm_scrollx
+    bic #^B1111111111111000, @#tm_scrollx
+    mov @#bitmapy, @#tm_scrolly
+    bic #^B1111111111111000, @#tm_scrolly
+    jsr pc, drawTilemap
+    wait
+
+    br noflipscr1 ; disable flipping
+
     mov #bitmap, @#bcopy_data
     mov #bitmap_H, @#bcopy_h
     mov @#bitmapx, @#bcopy_x
@@ -458,6 +677,45 @@ bitmap:
     .byte ^B01111110
 bitmap_H = 10
 
+TILE_H = 8
+SCREEN_TILES_W = SCREEN_WIDTH/STRIP_W
+SCREEN_TILES_H = SCREEN_HEIGHT/TILE_H
+t0:
+    .byte ^B11111111
+    .byte ^B10000001
+    .byte ^B10111101
+    .byte ^B10100101
+    .byte ^B10100101
+    .byte ^B10111101
+    .byte ^B10000001
+    .byte ^B11111111
+
+t1:
+    .byte ^B11001100
+    .byte ^B11001100
+    .byte ^B00110011
+    .byte ^B00110011
+    .byte ^B11001100
+    .byte ^B11001100
+    .byte ^B00110011
+    .byte ^B00110011
+
+; screen width / tile width, 120 / 8 + 1 = 16
+; screen height / tile height, 64 / 8 + 1 = 9
+SCREEN_MAP_W = SCREEN_TILES_W+1
+SCREEN_MAP_H = SCREEN_TILES_H+1
+SCREEN_MAP_SIZE = SCREEN_MAP_W*SCREEN_MAP_H
+screenMap:
+    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
+    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
+    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
+    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
+    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
+    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
+
 .EVEN
 
 endOfProgram: ; must not go beyond 10KB
@@ -466,9 +724,9 @@ endOfProgram: ; must not go beyond 10KB
 
 ; 2 screen pages
 screen0:
-    .blkb SCREEN_SIZE_B
+    .blkb SCREEN_PAGE
 screen1:
-    .blkb SCREEN_SIZE_B
+    .blkb SCREEN_PAGE
 scrptr:
     .word 0
 inkey:
@@ -482,6 +740,10 @@ bitmapY:
 bitmapXDir:
     .word 0
 bitmapYDir:
+    .word 0
+bgX:
+    .word 0
+bgY:
     .word 0
 
 endOfRAM: ; must not go beyond 16KB
