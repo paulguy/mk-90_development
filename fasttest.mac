@@ -44,8 +44,8 @@ scratch: ; this can be used as memory after things are loaded
     SCREEN_HEIGHT = 64
     SCREEN_WIDTH = 120
 
-    SCREEN_EXTRA_H = SCREEN_HEIGHT+7 ; add some scrollable region
-    SCREEN_PAGE = SCREEN_WIDTH_B*SCREEN_EXTRA_H
+    SCREEN_EXTRA_H = SCREEN_HEIGHT+14 ; add some scrollable region
+    SCREEN_PAGE = SCREEN_EXTRA_H*SCREEN_WIDTH_W
 
 loader:
 	mov #endOfProgram, r4
@@ -56,7 +56,7 @@ loaderClearScreenLoop:
 
     mov #16384, sp
 
-	mov	#screen0, @#LCDINA
+	mov	#7*SCREEN_WIDTH_B+screen0, @#LCDINA
 	mov #^B1000100011000110, @#LCDINB	;26Hz
 
 	;Loader copyed from Game of Life app of Piotr Piatek
@@ -403,11 +403,9 @@ drawTilemap:
     tm_xpos = scratch+8
     tm_ypos = scratch+10
 
-    mov @#tm_scrolly, r1 ; get last rows
-    add #SCREEN_HEIGHT/2, r1
-    mul #SCREEN_WIDTH_B, r1
-    sub #2, r1 ; get last screen word
-    add @#scrptr, r1
+    mov @#scrptr, r1
+    add #SCREEN_PAGE, r1
+    sub #2, r1
     mov r1, @#tm_screen_pointer
 
     mtps #^B11100000 ; save SP
@@ -557,14 +555,14 @@ tmSimpleStart:
 tmColumnSimpleLoop:
     mov @#tm_screen_pointer, sp
 
+    mov #8, r4
+
     mov #3, @#tm_ypos
     tst @#tm_scrolly
     beq tmNoExtraRowSimple
     inc @#tm_ypos
+    mov @#tm_scrolly, r4
 tmNoExtraRowSimple:
-
-    mov #8, r4 ; get remain of last tile
-    sub @#tm_scrolly, r4
 
 tmTileSimpleLoop:
     mov @#tm_ypos, r1 ; get index of top screen tile position
@@ -606,7 +604,7 @@ start:
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
     mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
     mov #0, @#bitmapx
-    mov #2, @#bitmapy
+    mov #0, @#bitmapy
     mov #1, @#bitmapXDir
     mov #1, @#bitmapYDir
     mov #0, @#bgX
@@ -614,10 +612,12 @@ start:
     mov #screen0, @#scrptr
 
 loop:
-    mov @#bitmapx, @#tm_scrollx
-    bic #^B1111111111111000, @#tm_scrollx
+    ;mov @#bitmapx, @#tm_scrollx
+    ;bic #^B1111111111111000, @#tm_scrollx
     mov @#bitmapy, @#tm_scrolly
     bic #^B1111111111111000, @#tm_scrolly
+    mov #0, @#tm_scrollx
+    ;mov #0, @#tm_scrolly
     jsr pc, drawTilemap
     wait
 
@@ -631,14 +631,14 @@ loop:
 
     cmp @#scrptr, #screen0
     beq flipscr1
-    mov #screen1, @#LCDINA
+    mov #7*SCREEN_WIDTH_B+screen1, @#LCDINA
 	mov	#screen0, @#scrptr
     br noflipscr1
 flipscr1:
-    mov #screen0, @#LCDINA
+    mov #7*SCREEN_WIDTH_B+screen0, @#LCDINA
 	mov	#screen1, @#scrptr
 noflipscr1:
-    
+   
     add @#bitmapXDir, @#bitmapx
     cmp @#bitmapx, #SCREEN_WIDTH-STRIP_W
     bgt negXDir
