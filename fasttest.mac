@@ -44,8 +44,10 @@ scratch: ; this can be used as memory after things are loaded
     SCREEN_HEIGHT = 64
     SCREEN_WIDTH = 120
 
-    SCREEN_EXTRA_H = SCREEN_HEIGHT+14 ; add some scrollable region
-    SCREEN_PAGE = SCREEN_EXTRA_H*SCREEN_WIDTH_W
+    ; add some scrollable region
+    SCREEN_EXTRA_ROWS = 7
+    SCREEN_EXTRA_MEM = SCREEN_EXTRA_ROWS*SCREEN_WIDTH_B
+    SCREEN_PAGE = SCREEN_SIZE_B+SCREEN_EXTRA_MEM
 
 loader:
 	mov #endOfProgram, r4
@@ -56,7 +58,7 @@ loaderClearScreenLoop:
 
     mov #16384, sp
 
-	mov	#7*SCREEN_WIDTH_B+screen0, @#LCDINA
+	mov	#screen0, @#LCDINA
 	mov #^B1000100011000110, @#LCDINB	;26Hz
 
 	;Loader copyed from Game of Life app of Piotr Piatek
@@ -404,14 +406,13 @@ drawTilemap:
     tm_ypos = scratch+10
 
     mov @#scrptr, r1
-    add #SCREEN_PAGE, r1
-    sub #2, r1
+    add #SCREEN_SIZE_B-6, r1
     mov r1, @#tm_screen_pointer
 
     mtps #^B11100000 ; save SP
     mov sp, @#tm_sp
 
-    mov #SCREEN_TILES_W-1*2, @#tm_xpos ; get the last tile on the screen row
+    mov #SCREEN_TILES_W-4*2, @#tm_xpos ; get the last tile on the screen row
 
     mov @#tm_scrollx, r2
 
@@ -420,33 +421,26 @@ drawTilemap:
 tmNoSimpleStart:
     mov #^B1111111111111111, @#screen0
 
-    add #2, @#tm_xpos ; start at the far right tile
-
-    mov r2, r4
     ; get a bit mask to clear from the screen word
     mov #^B0000000011111111, r3
-tmShift:
-    asr r3
-    sob r4, tmShift
-    mov r3, r4 ; copy mask low and high
+    ash r2, r3
+    bic #^B0000000011111111, r3 ; preserve mask in high byte
+    mov r3, r4 ; copy mask high to low
     swab r3
     bis r4, r3
     swab r3
 
-    sub #8, r2 ; convert to left shift
-    neg r2
-
 tmColumnLoop:
     mov @#tm_screen_pointer, sp
+
+    mov #8, r4
 
     mov #3, @#tm_ypos
     tst @#tm_scrolly
     beq tmNoExtraRowLeft
     inc @#tm_ypos
+    mov @#tm_scrolly, r4
 tmNoExtraRowLeft:
-
-    mov #8, r4 ; get remain of last tile
-    sub @#tm_scrolly, r4
 
 tmTileLeftLoop:
     mov @#tm_ypos, r1 ; get index of top screen tile position
@@ -455,12 +449,10 @@ tmTileLeftLoop:
     mov r1, r0
     mov screenMap(r1), r1 ; index to get pointer to tile data
     add r4, r1 ; start at last line
-    inc r1 ; pre-decrement
 
     add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
     mov screenMap(r0), r0
     add r4, r0
-    inc r0
 tmRowLeftLoop:
     movb -(r0), r5 ; move high byte in to low byte
     bic #^B1111111100000000, r5 ; mask sign extension
@@ -486,29 +478,27 @@ tmRowLeftLoop:
 
     mov @#tm_screen_pointer, sp
 
+    mov #8, r4
+
     mov #3, @#tm_ypos
     tst @#tm_scrolly
     beq tmNoExtraRowRight
     inc @#tm_ypos
+    mov @#tm_scrolly, r4
 tmNoExtraRowRight:
-
-    mov #8, r4 ; get remain of last tile
-    sub @#tm_scrolly, r4
 
 tmTileRightLoop:
     mov @#tm_ypos, r1 ; get index of top screen tile position
     mul #SCREEN_MAP_W*2, r1
     add @#tm_xpos, r1
-    inc r1 ; get righthand tile
+    add #2, r1
     mov r1, r0
     mov screenMap(r1), r1 ; index to get pointer to tile data
     add r4, r1 ; start at last line
-    inc r1 ; pre-decrement
 
     add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
     mov screenMap(r0), r0
     add r4, r0
-    inc r0
 tmRowRightLoop:
     movb -(r1), r5 ; move low byte in to low byte
     bic #^B1111111100000000, r5 ; mask sign extension
@@ -519,11 +509,11 @@ tmRowRightShiftLoop:
     asr r5 ; shift right
     sob r2, tmRowRightShiftLoop
     swab r3 ; get mask low
-    bicb r3, r1 ; mask left side of bytes
-    swab r1 ; this will place the low byte back to the low position
-    bicb r3, r1
+    bicb r3, r5 ; mask left side of bytes
+    swab r5 ; this will place the low byte back to the low position
+    bicb r3, r5
     swab r3 ; get shift back low
-    mov r5, (sp) ; write to screen
+    bis r5, (sp) ; write to screen
     sub #SCREEN_WIDTH_B, sp ; update screen pointer
     sob r4, tmRowRightLoop
 
@@ -545,7 +535,8 @@ tmRowRightShiftLoop:
 
     sub #2, @#tm_screen_pointer ; next left column
     sub #2, @#tm_xpos ; next column
-    bpl tmColumnLoop
+    bne tmColumnLoop
+    ;bpl tmColumnLoop
 
     mov @#tm_sp, sp ; restore SP
     mtps #^B00000000
@@ -609,6 +600,7 @@ start:
     mov #1, @#bitmapYDir
     mov #0, @#bgX
     mov #0, @#bgY
+    mov #screen0, @#LCDINA
     mov #screen0, @#scrptr
 
 loop:
@@ -619,9 +611,6 @@ loop:
     mov #0, @#tm_scrollx
     ;mov #0, @#tm_scrolly
     jsr pc, drawTilemap
-    wait
-
-    br noflipscr1 ; disable flipping
 
     mov #bitmap, @#bcopy_data
     mov #bitmap_H, @#bcopy_h
@@ -629,13 +618,14 @@ loop:
     mov @#bitmapy, @#bcopy_y
     jsr pc, drawbitmap
 
+    ; br noflipscr1 ; disable flipping
     cmp @#scrptr, #screen0
     beq flipscr1
-    mov #7*SCREEN_WIDTH_B+screen1, @#LCDINA
+    mov #screen1, @#LCDINA
 	mov	#screen0, @#scrptr
     br noflipscr1
 flipscr1:
-    mov #7*SCREEN_WIDTH_B+screen0, @#LCDINA
+    mov #screen0, @#LCDINA
 	mov	#screen1, @#scrptr
 noflipscr1:
    
@@ -723,10 +713,14 @@ endOfProgram: ; must not go beyond 10KB
 ; even if these get cut off by the 10KB memory card limit, they'll be initialized elsewhere anyway
 
 ; 2 screen pages
+screenTop0:
+    .blkb SCREEN_EXTRA_MEM
 screen0:
-    .blkb SCREEN_PAGE
+    .blkb SCREEN_SIZE_B
+screenTop1:
+    .blkb SCREEN_EXTRA_MEM
 screen1:
-    .blkb SCREEN_PAGE
+    .blkb SCREEN_SIZE_B
 scrptr:
     .word 0
 inkey:
