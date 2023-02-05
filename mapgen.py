@@ -59,7 +59,7 @@ def setMap(data, x, y, w, val):
     data[w*y+x] = val
 
 def gen(data, x, y, w):
-    vals = [0, 0, 0]
+    vals = [2, 1, 1]
     double = [1, 1, 1]
     neighbors = [probabilities[BlockType.Nothing][0],
                  probabilities[BlockType.Nothing][1],
