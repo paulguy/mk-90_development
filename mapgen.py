@@ -26,7 +26,7 @@ probabilities = {
                         (PMod.AddOne, PMod.AddOne, PMod.NoChange)),
     # Air - More chance to produce more air, but might make land
     # No floating water
-    BlockType.Air: ((PMod.Double, PMod.AddOne, PMod.Disallow),
+    BlockType.Air: ((PMod.Double, PMod.NoChange, PMod.Disallow),
                     (PMod.Double, PMod.AddOne, PMod.NoChange),
                     (PMod.Double, PMod.NoChange, PMod.Disallow),
                     (PMod.Double, PMod.NoChange, PMod.Disallow)),
@@ -72,7 +72,7 @@ def gen(data, x, y, w):
     if y - 1 >= 0:
         # north will want south
         neighbors[1] = probabilities[BlockType(getMap(data, x, y - 1, w))][1]
-    if x + 1 < WIDTH:
+    if x + 1 < w:
         # east will want west
         neighbors[2] = probabilities[BlockType(getMap(data, x + 1, y, w))][2]
     if x - 1 >= 0:
