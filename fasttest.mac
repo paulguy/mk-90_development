@@ -190,18 +190,16 @@ copyBitmapTop:
     mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
     add @#scrptr, r3
 
-    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
-    asr r2
-    asr r2
-    asr r2
-    asl r2 ; each 8 pixels on screen is 1 word apart
-    add r2, r3 ; add X offset to screen start pointer
-
     mtps #^B11100000 ; avoid SP being used
     mov sp, @#bcopy_sp
     mov r3, sp ; SP can't have the 1 bit set but the screen pointer shouldn't need it?
 
-    mov r3, @#bcopy_screen_pointer ; save the screen pointer too
+    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    ash #-3, r2
+    asl r2 ; each 8 pixels on screen is 1 word apart
+    add r2, sp ; add X offset to screen start pointer
+
+    mov sp, @#bcopy_screen_pointer ; save the screen pointer too
 
     mov @#bcopy_data, r0 ; get first pointer to bitmap
 
@@ -210,27 +208,23 @@ copyBitmapTop:
 
     beq centerStripSimpleLoopTopStart ; take simple path if aligned
 
-    mov r2, r5
+    neg r2 ; ash shifts right for negatives
+
     ; get a bit mask to clear from the screen word
-    mov #^B0000000011111111, r3
-copyTopShift:
-    asr r3
-    sob r5, copyTopShift
+    mov #^B0000000011111111, r5
+    ash r2, r5 ; shift right
 
 leftStripLoopTop:
     movb (r0)+, r4 ; get bitmap byte
     bic #^B1111111100000000, r4 ; clear high bits so asr doesn't sign-extend
-    movb r2, r5 ; get shift amount
-leftTopShift: ; shift bitmap bits right
-    asr r4 
-    sob r5, leftTopShift
+    ash r2, r4
     
-    mov (sp), r5 ; get screen word
+    mov (sp), r3 ; get screen word
 
-    bicb r3, r5 ; clear bits
-    bisb r4, r5 ; set bitmap bits in to screen word
+    bicb r5, r3 ; clear bits
+    bisb r4, r3 ; set bitmap bits in to screen word
 
-    mov r5, (sp) ; write back to screen
+    mov r3, (sp) ; write back to screen
 
     add #SCREEN_WIDTH_B, sp ; next screen row
     sob r1, leftStripLoopTop
@@ -242,21 +236,20 @@ leftTopShift: ; shift bitmap bits right
 
     mov @#bcopy_remaining_rows, r1 ; restore height
 
-    comb r3
-    sub #8, r2 ; convert left shift in to right shift
-    neg r2
+    add #8, r2 ; switch back to left shift
+    com r5 ; get leftside mask
 
 rightStripLoopTop:
     movb (r0)+, r4 ; get bitmap byte
     ash r2, r4 ; shift byte left, ash ignores high bits?
     bic #^B1111111100000000, r4 ; clear high bits
 
-    mov (sp), r5 ; get screen word
+    mov (sp), r3 ; get screen word
 
-    bicb r3, r5 ; clear bits
-    bisb r4, r5 ; set bitmap bits in to screen word
+    bicb r5, r3 ; clear bits
+    bisb r4, r3 ; set bitmap bits in to screen word
 
-    mov r5, (sp) ; write back to screen
+    mov r3, (sp) ; write back to screen
 
     add #SCREEN_WIDTH_B, sp ; update screen pointer
     sob r1, rightStripLoopTop
@@ -266,17 +259,17 @@ rightStripLoopTop:
     rts pc
 
 centerStripSimpleLoopTopStart:
-    mov #^B0000000011111111, r3
+    mov #^B0000000011111111, r5
     mov #SCREEN_WIDTH_B, r2
 centerStripSimpleLoopTop:
     movb (r0)+, r4 ; get bitmap byte
 
-    mov (sp), r5 ; get screen word
+    mov (sp), r3 ; get screen word
 
-    bic r3, r5 ; clear low bits
-    bisb r4, r5 ; write bitmap in to screen word
+    bic r5, r3 ; clear low bits
+    bisb r4, r3 ; write bitmap in to screen word
 
-    mov r5, (sp) ; write word back to screen
+    mov r3, (sp) ; write word back to screen
 
     add r2, sp ; next screen row
     sob r1, centerStripSimpleLoopTop
@@ -296,18 +289,16 @@ copyBitmapBottom:
     mul #SCREEN_WIDTH_B, r3 ; r2 doesn't work?  use r3
     add @#scrptr, r3
 
-    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
-    asr r2
-    asr r2
-    asr r2
-    asl r2 ; each 8 pixels on screen is 1 word apart
-    add r2, r3 ; add X offset to screen start pointer
-
     mtps #^B11100000 ; avoid SP being used
     mov sp, @#bcopy_sp
     mov r3, sp ; SP can't have the 1 bit set but the screen pointer shouldn't need it?
 
-    mov r3, @#bcopy_screen_pointer ; save the screen pointer too
+    mov @#bcopy_x, r2 ; get X offset and convert it to a byte offset by chopping off 3 bits
+    ash #-3, r2
+    asl r2 ; each 8 pixels on screen is 1 word apart
+    add r2, sp ; add X offset to screen start pointer
+
+    mov sp, @#bcopy_screen_pointer ; save the screen pointer too
 
     mov @#bcopy_data, r0 ; get first pointer to bitmap
 
@@ -316,29 +307,25 @@ copyBitmapBottom:
 
     beq centerStripSimpleLoopBottomStart ; take simple path if aligned
 
-    mov r2, r5
+    neg r2 ; ash shifts right for negatives
+
     ; get a bit mask to clear from the screen word
-    mov #^B0000000011111111, r3
-copyBottomShift:
-    asr r3
-    sob r5, copyBottomShift
+    mov #^B0000000011111111, r5
+    ash r2, r5 ; shift right
 
 leftStripLoopBottom:
     movb (r0)+, r4 ; get bitmap byte
     bic #^B1111111100000000, r4 ; clear high bits so asr doesn't sign-extend
-    movb r2, r5 ; get shift amount
-leftBottomShift: ; shift bitmap bits right
-    asr r4 
-    sob r5, leftBottomShift
+    ash r2, r4
     
-    mov (sp), r5 ; get screen word
-    swab r5
+    mov (sp), r3 ; get screen word
+    swab r3
 
-    bicb r3, r5 ; clear bits
-    bisb r4, r5 ; set bitmap bits in to screen word
+    bicb r5, r3 ; clear bits
+    bisb r4, r3 ; set bitmap bits in to screen word
 
-    swab r5
-    mov r5, (sp) ; write back to screen
+    swab r3
+    mov r3, (sp) ; write back to screen
 
     add #SCREEN_WIDTH_B, sp ; next screen row
     sob r1, leftStripLoopBottom
@@ -350,23 +337,22 @@ leftBottomShift: ; shift bitmap bits right
 
     mov @#bcopy_remaining_rows, r1 ; restore height
 
-    comb r3
-    sub #8, r2 ; convert left shift in to right shift
-    neg r2
+    add #8, r2 ; switch back to left shift
+    com r5 ; get leftside mask
 
 rightStripLoopBottom:
     movb (r0)+, r4 ; get bitmap byte
     ash r2, r4 ; shift byte left, ash ignores high bits?
     bic #^B1111111100000000, r4 ; clear high bits
 
-    mov (sp), r5 ; get screen word
-    swab r5
+    mov (sp), r3 ; get screen word
+    swab r3
 
-    bicb r3, r5 ; clear bits
-    bisb r4, r5 ; set bitmap bits in to screen word
+    bicb r5, r3 ; clear bits
+    bisb r4, r3 ; set bitmap bits in to screen word
 
-    swab r5
-    mov r5, (sp) ; write back to screen
+    swab r3
+    mov r3, (sp) ; write back to screen
 
     add #SCREEN_WIDTH_B, sp ; update screen pointer
     sob r1, rightStripLoopBottom
@@ -376,19 +362,19 @@ rightStripLoopBottom:
     rts pc
 
 centerStripSimpleLoopBottomStart:
-    mov #^B0000000011111111, r3
+    mov #^B0000000011111111, r5
     mov #SCREEN_WIDTH_B, r2
 centerStripSimpleLoopBottom:
     movb (r0)+, r4 ; get bitmap byte
 
-    mov (sp), r5 ; get screen word
-    swab r5
+    mov (sp), r3 ; get screen word
+    swab r3
 
-    bic r3, r5 ; clear low bits
-    bisb r4, r5 ; write bitmap in to screen word
+    bic r5, r3 ; clear low bits
+    bisb r4, r3 ; write bitmap in to screen word
 
-    swab r5
-    mov r5, (sp) ; write word back to screen
+    swab r3
+    mov r3, (sp) ; write word back to screen
 
     add r2, sp ; next screen row
     sob r1, centerStripSimpleLoopBottom
@@ -396,6 +382,7 @@ centerStripSimpleLoopBottom:
     mov @#bcopy_sp, sp
     mtps #^B00000000
     rts pc
+
 
 drawTilemap:
     tm_scrollx = arg ; X scroll px, must be 0-7

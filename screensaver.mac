@@ -311,6 +311,8 @@ rightStripLoopTop:
 centerStripSimpleLoopTopStart:
     mov @#bcopy_w, r2 ; may as well use a register during the loop
     ; r2 normally has the shift amount which isn't meaningful here
+    mov #SCREEN_WIDTH_B, r5
+    ; r5 normally has mask which isn't meaningful here
 centerStripSimpleLoopTop:
     movb (r0), r4 ; get bitmap byte
 
@@ -323,7 +325,7 @@ centerStripSimpleLoopTop:
 
     mov r3, (sp) ; write word back to screen
 
-    add #SCREEN_WIDTH_B, sp ; next screen row
+    add r5, sp ; next screen row
     add r2, r0 ; next bitmap row
     sob r1, centerStripSimpleLoopTop
 
@@ -483,6 +485,8 @@ rightStripLoopBottom:
 centerStripSimpleLoopBottomStart:
     mov @#bcopy_w, r2 ; may as well use a register during the loop
     ; r2 normally has the shift amount which isn't meaningful here
+    mov #SCREEN_WIDTH_B, r5
+    ; r5 normally has mask which isn't meaningful here
 centerStripSimpleLoopBottom:
     movb (r0), r4 ; get bitmap byte
 
@@ -497,7 +501,7 @@ centerStripSimpleLoopBottom:
     swab r3
     mov r3, (sp) ; write word back to screen
 
-    add #SCREEN_WIDTH_B, sp ; next screen row
+    add r5, sp ; next screen row
     add r2, r0 ; next bitmap row
     sob r1, centerStripSimpleLoopBottom
 
