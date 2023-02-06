@@ -406,7 +406,6 @@ drawTilemap:
     bne tmNoSimpleStart
     jmp tmSimpleStart ; take simple path if aligned
 tmNoSimpleStart:
-    mov #^B1111111111111111, @#screen0
 
     ; get a bit mask to clear from the screen word
     mov #^B0000000011111111, r3
@@ -446,6 +445,7 @@ tmRowLeftLoop:
     swab r5 ; swap high byte high
     bisb -(r1), r5 ; mask value in low
     ash r2, r5 ; shift left
+
     bic r3, r5 ; mask out right side
     mov r5, (sp) ; write to screen
     sub #SCREEN_WIDTH_B, sp ; update screen pointer
@@ -458,10 +458,7 @@ tmRowLeftLoop:
 
 ; right side start
     sub #8, r2 ; convert to right shift
-    neg r2
     com r3
-    bic #^B0000000011111111, r3 ; fold r2 in to r3
-    bis r2, r3
 
     mov @#tm_screen_pointer, sp
 
@@ -487,19 +484,13 @@ tmTileRightLoop:
     mov screenMap(r0), r0
     add r4, r0
 tmRowRightLoop:
-    movb -(r1), r5 ; move low byte in to low byte
+    movb -(r0), r5 ; move high byte in to low byte
     bic #^B1111111100000000, r5 ; mask sign extension
-    swab r5 ; swap low byte high
-    bisb -(r0), r5 ; mask high value in low
-    movb r3, r2
-tmRowRightShiftLoop:
-    asr r5 ; shift right
-    sob r2, tmRowRightShiftLoop
-    swab r3 ; get mask low
-    bicb r3, r5 ; mask left side of bytes
-    swab r5 ; this will place the low byte back to the low position
-    bicb r3, r5
-    swab r3 ; get shift back low
+    swab r5 ; swap high byte high
+    bisb -(r1), r5 ; mask value in low
+    ash r2, r5 ; shift left
+
+    bic r3, r5 ; mask out right side
     bis r5, (sp) ; write to screen
     sub #SCREEN_WIDTH_B, sp ; update screen pointer
     sob r4, tmRowRightLoop
@@ -509,15 +500,7 @@ tmRowRightShiftLoop:
     dec @#tm_ypos ; next tile up
     bpl tmTileRightLoop
 
-    mov r3, r2 ; unfold r3 and r2
-    bic #^B1111111100000000, r2 ; remove mask from high byte
-    bic #^B0000000011111111, r3 ; remove shift from low byte
-    mov r3, r4 ; duplicate mask back in to low byte
-    swab r4
-    bis r4, r3
-
-    sub #8, r2 ; convert back to right shift
-    neg r2
+    add #8, r2 ; convert back to right shift
     com r3
 
     sub #2, @#tm_screen_pointer ; next left column
@@ -553,13 +536,18 @@ tmTileSimpleLoop:
     add #SCREEN_MAP_W*2*4, r0 ; get bottom screen index
     mov screenMap(r0), r0
     add r4, r0
+
+    mov #SCREEN_WIDTH_B, r2
+    ; r2 is free here, so use it.
+    mov #^B1111111100000000, r3
+    ; r3 is also free, so use it
 tmRowSimpleLoop:
     movb -(r0), r5 ; move high byte in to low byte
-    bic #^B1111111100000000, r5 ; mask sign extension
+    bic r3, r5 ; mask sign extension
     swab r5 ; swap high byte high
     bisb -(r1), r5 ; mask value in low
     mov r5, (sp) ; write to screen
-    sub #SCREEN_WIDTH_B, sp ; update screen pointer
+    sub r2, sp ; update screen pointer
     sob r4, tmRowSimpleLoop
 
     mov #8, r4 ; reset tile row
@@ -588,7 +576,7 @@ start:
     mov #0, @#bgX
     mov #0, @#bgY
     mov #screen0, @#LCDINA
-    mov #screen0, @#scrptr
+    mov #screen1, @#scrptr
 
 loop:
     ;mov @#bitmapx, @#tm_scrollx
