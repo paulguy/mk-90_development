@@ -391,6 +391,7 @@ drawTilemap:
     tm_sp = scratch+6
     tm_xpos = scratch+8
     tm_ypos = scratch+10
+    tm_row_ptrs = scratch+12 ; 9 words
 
     mov @#scrptr, r1
     add #SCREEN_SIZE_B-6, r1
@@ -399,91 +400,110 @@ drawTilemap:
     mtps #^B11100000 ; save SP
     mov sp, @#tm_sp
 
-    mov #SCREEN_MAP_W-1*2, @#tm_xpos ; get the last tile on the screen row
+    mov #SCREEN_MAP_W-1, @#tm_xpos ; get the last tile on the screen row
 
-tmSimpleStart:
-tmColumnSimpleLoop:
+    mov #8, r0 ; start at bottom row
+    add @#tm_yoffset, r0 ; add offset
+    mov #18, r2 ; + 2 because 0 is skipped
+tmPopulatePtrs:
+    bic #^B1111111111100000, r0 ; limit from 0-31
+    movb tmWrapLookup(r0), r0 ; limit from 0-8
+    mov r0, r1
+    mul #SCREEN_MAP_W*2, r1 ; get the row
+    add #SCREEN_MAP_W-1*2, r1 ; start at last column
+    mov r1, tm_row_ptrs-2(r2) ; - 2 because 0 is skipped
+    dec r0
+    dec r2
+    sob r2, tmPopulatePtrs
+
+tmColumnLoop:
     mov @#tm_screen_pointer, sp
 
     mov #8, r4
 
-    mov #3, @#tm_ypos
+    mov #6, @#tm_ypos
     tst @#tm_scrolly
-    beq tmNoExtraRowSimple
-    inc @#tm_ypos
+    beq tmNoExtraRow
+    add #2, @#tm_ypos
     mov @#tm_scrolly, r4
-tmNoExtraRowSimple:
+tmNoExtraRow:
 
-tmTileSimpleLoop:
-    mov @#tm_ypos, r1 ; get index of top screen tile position
-    add @#tm_yoffset, r1 ; add offset
-    bic #^B1111111111110000, r1 ; limit from 0-15
-    movb tmWrapLookup(r1), r1 ; limit from 0-8
-    mov r1, r3
-    add #SCREEN_TILES_H/2, r3
-    bic #^B1111111111110000, r3 ; limit from 0-15
-    movb tmWrapLookup(r3), r3 ; limit from 0-8
-    mul #SCREEN_MAP_W*2, r1
-    mul #SCREEN_MAP_W*2, r3
-    add @#tm_xpos, r1
-    add @#tm_xpos, r3
+tmTileLoop:
+    mov @#tm_ypos, r2
+    mov tm_row_ptrs(r2), r3
     mov screenMap(r3), r0 ; index to get pointer to tile data
     add r4, r0 ; start at last line
 
-    mov screenMap(r1), r1
+    add #8, r2
+    mov tm_row_ptrs(r2), r3
+    mov screenMap(r3), r1
     add r4, r1
 
     mov #SCREEN_WIDTH_B, r2
     ; r2 is free here, so use it.
     mov #^B1111111100000000, r3
     ; r3 is also free, so use it
-tmRowSimpleLoop:
-    movb -(r0), r5 ; move high byte in to low byte
+tmRowLoop:
+    movb -(r1), r5 ; move high byte in to low byte
     bic r3, r5 ; mask sign extension
     swab r5 ; swap high byte high
-    bisb -(r1), r5 ; mask value in low
+    bisb -(r0), r5 ; mask value in low
     mov r5, (sp) ; write to screen
     sub r2, sp ; update screen pointer
-    sob r4, tmRowSimpleLoop
+    sob r4, tmRowLoop
 
     mov #8, r4 ; reset tile row
 
-    dec @#tm_ypos ; next tile up
-    bpl tmTileSimpleLoop
+    sub #2, @#tm_ypos
+    bpl tmTileLoop
+
+    mov #18, r0 ; 16 + 2 because 0 is skipped
+tmMovePtrsLeft:
+    sub #2, tm_row_ptrs-2(r0) ; - 2 because 0 is skipped
+    dec r0
+    sob r0, tmMovePtrsLeft
 
     sub #2, @#tm_screen_pointer ; next left column
-    sub #2, @#tm_xpos ; next column
-    bpl tmColumnSimpleLoop
+    dec @#tm_xpos ; next column
+    bpl tmColumnLoop
 
     mov @#tm_sp, sp ; restore SP
     mtps #^B00000000
     rts pc
 
 tmWrapLookup:
+    ; 32 bytes
     .byte 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6
+    ; i don't know if it goes negative, but have some values for if it does?
+    .byte 7, 8, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8
 
 start:
-    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
-    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
-    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
-    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
+;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
+;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
+;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
+;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
     mov #0, @#bitmapx
     mov #0, @#bitmapy
     mov #1, @#bitmapXDir
     mov #1, @#bitmapYDir
-    mov #0, @#bgX
-    mov #0, @#bgY
+    clr @#bgY
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
 
 loop:
-    mov @#bitmapy, @#tm_scrolly
+    mov @#bgY, @#tm_scrolly
     bic #^B1111111111111000, @#tm_scrolly
-    mov @#bitmapy, r0
+    mov @#bgY, r0
     ash #-3, r0
-    bic #^B1111111111111000, r0
+    bic #^B1111111111110000, r0
     mov r0, @#tm_yoffset
     jsr pc, drawTilemap
+
+    inc @#bgY
+    cmp @#bgY, #9*8
+    blt noResetBGY
+    clr @#bgY
+noResetBGY:
 
     mov #bitmap, @#bcopy_data
     mov #bitmap_H, @#bcopy_h
@@ -501,7 +521,7 @@ flipscr1:
     mov #screen0, @#LCDINA
 	mov	#screen1, @#scrptr
 noflipscr1:
-   
+
     add @#bitmapXDir, @#bitmapx
     cmp @#bitmapx, #SCREEN_WIDTH-STRIP_W
     bgt negXDir
@@ -570,14 +590,14 @@ SCREEN_MAP_H = SCREEN_TILES_H+1
 SCREEN_MAP_SIZE = SCREEN_MAP_W*SCREEN_MAP_H
 screenMap:
     .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
-    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t0, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
+    .word t1, t0, t0, t1, t0, t1, t1, t0, t1, t1, t0, t1
     .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
-    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t1, t0, t1, t0, t0, t1, t1, t0, t1, t1, t0
+    .word t1, t0, t1, t1, t0, t0, t1, t0, t1, t1, t0, t1
     .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
-    .word t1, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1
+    .word t1, t1, t0, t1, t1, t0, t1, t0, t0, t1, t1, t0
+    .word t1, t0, t1, t1, t0, t1, t1, t0, t0, t1, t0, t1
 
 .EVEN
 
@@ -607,8 +627,6 @@ bitmapY:
 bitmapXDir:
     .word 0
 bitmapYDir:
-    .word 0
-bgX:
     .word 0
 bgY:
     .word 0
