@@ -6,6 +6,9 @@
 	.ASECT		; Absolute section
     .RADIX 10
 
+PLAYER_STARTX = SCREEN_TILES_W-3
+PLAYER_STARTY = 4 ; from the right
+
 	.= 0		; Beginning of cartridge
     nop ; seems to be needed
     br loader
@@ -48,6 +51,10 @@ scratch: ; this can be used as memory after things are loaded
     SCREEN_EXTRA_ROWS = 7
     SCREEN_EXTRA_MEM = SCREEN_EXTRA_ROWS*SCREEN_WIDTH_B
     SCREEN_PAGE = SCREEN_SIZE_B+SCREEN_EXTRA_MEM
+
+; ########################################
+; ##### Loader                       #####
+; ########################################
 
 loader:
 	mov #endOfProgram, r4
@@ -96,10 +103,16 @@ nxtb:
 
     .blkb 14 ; push the keyboard interrupt vector as far to the end as possible
 
+; ########################################
+; ##### Utilities                    #####
+; ########################################
+
 keyIntHandle:
     mtps #^O340
     mov r0, -(sp)
     mov r1, -(sp)
+
+    jsr pc, getRandom
 
     mov #SMPBAUD, r1
     mov #8, (r1)+ ;@#SMPBAUD
@@ -117,6 +130,27 @@ waitGetKey:
 
     .= 200 ; Location of KBCU IV
     .word	keyIntHandle, 0000
+
+getRandom:
+    mov r1, -(sp)
+    mov @#randomSeed, r0
+    mov r0, r1
+    ash #7, r1
+    xor r1, r0
+    mov r0, r1
+    ash #-9, r1
+    bic #^B1111111110000000, r1
+    xor r1, r0
+    mov r0, r1
+    ash #8, r1
+    xor r1, r0
+    mov r0, @#randomSeed
+    mov (sp)+, r1
+    rts pc
+
+; ########################################
+; ##### Bitmap Drawing               #####
+; ########################################
 
 drawBitmap:
     ; Draw a bitmap to the screen
@@ -383,6 +417,9 @@ centerStripSimpleLoopBottom:
     mtps #^B00000000
     rts pc
 
+; ########################################
+; ##### Tilemap Drawing              #####
+; ########################################
 
 drawTilemap:
     tm_scrolly = arg ; Y scroll px, must be 0-7
@@ -477,16 +514,303 @@ tmWrapLookup:
     ; i don't know if it goes negative, but have some values for if it does?
     .byte 7, 8, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8
 
+; ########################################
+; ##### Map Generation               #####
+; ########################################
+
+    gen_x = arg
+    gen_y = arg+2
+    gen_x_save = scratch+4
+    gen_vals = scratch+6 ; 3 words
+    gen_double = scratch+12 ; 3 words
+
+gen_gather:
+    ; r0 - not used
+    ; r1 - pointer to probabilities
+    ; r2 - not used (reserved)
+    ; r3 - used (iterations counter)
+    ; r4 - used (values pointer)
+    ; r5 - used (doubles pointer)
+
+    mov #gen_vals, r4
+    mov #gen_double, r5
+    mov #3, r3
+gen_next_prob:
+    tst (r4) ; check if disallowed already
+    beq gen_disallowed
+    movb (r1), r0
+    bne gen_no_Disallow ; test of not 0 (PMOD_DISALLOW)
+    clr (r4) ; clear to 0 (disallowed)
+    br gen_disallowed ; no more to do
+gen_no_Disallow:
+    dec r0
+    bne gen_no_AddOne ; test if not 1 (PMOD_ADDONE)
+    inc (r4)
+    br gen_done
+gen_no_AddOne:
+    dec r0
+    bne gen_done ; test if not 2 (PMOD_DOUBLE)
+    inc (r5)
+gen_done: ; no need to check for PMOD_NOCHANGE, it'll just fall through
+    inc r1
+    add #2, r4
+    add #2, r5
+    sob r3, gen_next_prob
+gen_disallowed:
+
+    rts pc
+
+gen:
+    gen_init_prob_air = 2
+    gen_init_prob_land = 1
+    gen_init_prob_water = 1
+    gen_init_double = 0 ; 1
+
+    ; initial values
+    mov #gen_init_prob_air, @#gen_vals
+    mov #gen_init_prob_land, @#gen_vals+2
+    mov #gen_init_prob_water, @#gen_vals+4
+    mov #gen_init_double, @#gen_double
+    mov #gen_init_double, @#gen_double+2
+    mov #gen_init_double, @#gen_double+4
+
+    mov @#gen_y, r3 ; y * width + x
+    mul #SCREEN_MAP_W, r3
+    add @#gen_x, r3
+    add #collisionMap, r3
+    mov r3, r2 ; save pointer
+
+    ; get left neighbor
+    mov #BLOCKTYPE_NOTHING, r1
+    tst @#gen_x ; check if x is 0 so left neighbor would be nothing
+    beq gen_leftNothing
+    dec r3 ; neighbor to the left
+    movb (r3), r1
+gen_leftNothing:
+    mul #prob_neigh_type_mul, r1
+    ; left neighbor will generate probabilities for right neighbors
+    add #probabilities_right, r1
+
+    jsr pc, gen_gather
+
+    ; get right neighbor
+    mov r2, r3 ; restore pointer
+
+    mov #BLOCKTYPE_NOTHING, r1
+    ; check if x is the far right so neighbor would be nothing
+    cmp @#gen_x, #SCREEN_MAP_W-1
+    beq gen_rightNothing
+    inc r3 ; neighbor to the right
+    movb (r3), r1
+gen_rightNothing:
+    mul #prob_neigh_type_mul, r1
+    ; right neighbor will generate probabilities for left neighbors
+    add #probabilities_left, r1
+
+    jsr pc, gen_gather
+
+    ; get up neighbor
+    mov r2, r3 ; restore pointer
+
+    mov #BLOCKTYPE_NOTHING, r1
+    tst @#gen_y ; check of y is 0 so up neighbor would be nothing
+    beq gen_upNothing
+    sub #SCREEN_MAP_W, r3 ; neighbor up
+    movb (r3), r1
+gen_upNothing:
+    mul #prob_neigh_type_mul, r1
+    ; up neighbor will generate probabilities for down neighbors
+    add #probabilities_down, r1
+
+    jsr pc, gen_gather
+
+    ; get down neighbor
+    mov r2, r3 ; restore pointer
+
+    mov #BLOCKTYPE_NOTHING, r1
+    ; check if y is the far bottom so neighbor would be nothing
+    cmp @#gen_y, #SCREEN_MAP_H-1
+    beq gen_downNothing
+    add #SCREEN_MAP_W, r3 ; neighbor down
+    movb (r3), r1
+gen_downNothing:
+    mul #prob_neigh_type_mul, r1
+    ; down neighbor will generate probabilities for up neighbors
+    add #probabilities_up, r1
+
+    jsr pc, gen_gather
+
+    ; do final multiplications
+    mov @#gen_vals, r0
+    ash @#gen_double, r0
+    mov r0, @#gen_vals
+
+    mov @#gen_vals+2, r0
+    ash @#gen_double+2, r0
+    mov r0, @#gen_vals+2
+
+    mov @#gen_vals+4, r0
+    ash @#gen_double+4, r0
+    mov r0, @#gen_vals+4
+
+    ; become a list of ranges
+    add @#gen_vals, @#gen_vals+2
+    add @#gen_vals+2, @#gen_vals+4
+
+    ; get a value from 0 to max range
+    jsr pc, getRandom
+    div @#gen_vals+4, r0 ; remainder is in r1
+
+    mov r2, r3 ; restore pointer
+
+    tst @#gen_vals
+    beq gen_no_air
+    cmp r1, @#gen_vals
+    bge gen_no_air
+    movb #BLOCKTYPE_AIR, (r3)
+    br gen_found_block
+gen_no_air:
+    cmp @#gen_vals, @#gen_vals+2
+    beq gen_no_land
+    cmp r1, @#gen_vals+2
+    bge gen_no_land
+    movb #BLOCKTYPE_LAND, (r3)
+    br gen_found_block
+gen_no_land:
+    cmp @#gen_vals+2, @#gen_vals+4
+    beq gen_no_water
+    ; I could in theory just flal through and always set it to water, but I
+    ; want the error state to be more obvious.
+    cmp r1, @#gen_vals+4
+    bge gen_no_water
+    movb #BLOCKTYPE_WATER, (r3)
+gen_no_water:
+gen_found_block:
+
+    rts pc
+
+collisionMapToTileMap:
+    ; TODO: conditional or random variation tiles
+    mov @#gen_y, r1
+    mul #SCREEN_MAP_W, r1
+    add #collisionMap, r1
+    mov r1, r2
+
+    mov @#gen_y, r1
+    mul #SCREEN_MAP_W*2, r1
+    add #screenMap, r1
+
+    mov #SCREEN_MAP_W, r4
+cmap_next_tile:
+    movb (r2), r3 ; get type
+    mul #t_air-t_none, r3 ; get pointer from type
+    add #t_none, r3
+    mov r3, (r1) ; insert in to screen map
+    add #2, r1 ; next screen map pointer
+    inc r2 ; next collision map pointer
+    sob r4, cmap_next_tile
+
+    rts pc
+
+genLeft:
+    jsr pc, gen
+    dec @#gen_x
+    bpl genLeft
+
+    rts pc
+
+genRight:
+    jsr pc, gen
+    inc @#gen_x
+    cmp @#gen_x, #SCREEN_MAP_W
+    blt genRight
+
+    rts pc
+
+genUp:
+    jsr pc, getRandom
+    div #SCREEN_MAP_W-2, r0
+    ; r1 has the remainder
+    inc r1 ; make sure there's space above and below
+    mov r1, @#gen_x
+    mov r1, @#gen_x_save
+    jsr pc, gen
+    dec @#gen_x
+    jsr pc, genLeft
+    mov @#gen_x_save, @#gen_x
+    inc @#gen_x
+    jsr pc, genRight
+    jsr pc, collisionMapToTileMap
+    dec @#gen_y
+    bpl genUp
+
+    rts pc
+
+genDown:
+    jsr pc, getRandom
+    div #SCREEN_MAP_W-2, r0
+    ; r1 has the remainder
+    inc r1 ; make sure there's space above and below
+    mov r1, @#gen_x
+    mov r1, @#gen_x_save
+    jsr pc, gen
+    dec @#gen_x
+    jsr pc, genLeft
+    mov @#gen_x_save, @#gen_x
+    inc @#gen_x
+    jsr pc, genRight
+    jsr pc, collisionMapToTileMap
+    inc @#gen_y
+    cmp @#gen_y, #SCREEN_MAP_H
+    blt genDown
+
+    rts pc
+
+; ########################################
+; ##### Start                        #####
+; ########################################
+
 start:
-;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B
-;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+2
-;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+4
-;    mov #^B1010101110101011, @#screen0+SCREEN_WIDTH_B+6
+    mov #12345, @#randomSeed
+
+; clear everything
+    mov #screenMapEnd-screenMap+2, r0
+clearScreenMap:
+    mov #t_none, screenMap-2(r0)
+    dec r0
+    sob r0, clearScreenMap
+
+    mov #collisionMapEnd-collisionMap+2, r0
+clearCollisionMap:
+    mov #0, collisionMap-2(r0)
+    dec r0
+    sob r0, clearCollisionMap
+
+    ; starting platform
+    movb #BLOCKTYPE_AIR, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX
+    movb #BLOCKTYPE_LAND, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX+1
+
+    mov #PLAYER_STARTY, @#gen_y
+
+    mov #PLAYER_STARTX-1, @#gen_x
+    jsr pc, genLeft
+
+    mov #PLAYER_STARTX+2, @#gen_x
+    jsr pc, genRight
+
+    jsr pc, collisionMapToTileMap
+
+    mov #PLAYER_STARTY-1, @#gen_y
+    jsr pc, genUp
+
+    mov #PLAYER_STARTY+1, @#gen_y
+    jsr pc, genDown
+
     mov #0, @#bitmapx
     mov #0, @#bitmapy
     mov #1, @#bitmapXDir
     mov #1, @#bitmapYDir
-    clr @#bgY
+    mov #4, bgY ; start centered
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
 
@@ -544,6 +868,8 @@ negYDir:
     add @#bitmapYDir, @#bitmapy
 noNegYDir:
 
+    jsr pc, getRandom
+
     br loop
 
 STRIP_W = 8
@@ -563,25 +889,84 @@ bitmap_H = 10
 TILE_H = 8
 SCREEN_TILES_W = SCREEN_WIDTH/STRIP_W
 SCREEN_TILES_H = SCREEN_HEIGHT/TILE_H
-t0:
-    .byte ^B11111111
-    .byte ^B10000001
-    .byte ^B10111101
-    .byte ^B10100101
-    .byte ^B10100101
-    .byte ^B10111101
-    .byte ^B10000001
+t_none:
+    .byte ^B00000001
+    .byte ^B01000101
+    .byte ^B00101001
+    .byte ^B00010001
+    .byte ^B00101001
+    .byte ^B01000101
+    .byte ^B00000001
     .byte ^B11111111
 
-t1:
-    .byte ^B11001100
-    .byte ^B11001100
-    .byte ^B00110011
-    .byte ^B00110011
-    .byte ^B11001100
-    .byte ^B11001100
-    .byte ^B00110011
-    .byte ^B00110011
+t_air:
+    .byte ^B00000000
+    .byte ^B00000000
+    .byte ^B01000000
+    .byte ^B00000000
+    .byte ^B00000000
+    .byte ^B00000100
+    .byte ^B00001000
+    .byte ^B00000000
+
+t_land:
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+
+t_water:
+    .byte ^B01100110
+    .byte ^B00000000
+    .byte ^B01110000
+    .byte ^B00000111
+    .byte ^B00000000
+    .byte ^B11000000
+    .byte ^B00001110
+    .byte ^B00000000
+
+PMOD_DISALLOW = 0
+PMOD_ADDONE = 1
+PMOD_DOUBLE = 2
+PMOD_NOCHANGE = 3
+    ; each is in west, east, south, north order
+probabilities_start:
+probabilities_left:
+    ; nothing
+    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+probabilities_right:
+    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+probabilities_down:
+    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+probabilities_up:
+    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+prob_type:
+    ; air
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
+    ; land
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_NOCHANGE
+    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+    .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
+    .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
+    ; water
+    .byte PMOD_ADDONE, PMOD_DISALLOW, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
+
+prob_neigh_type_mul = prob_type-probabilities_start
+.EVEN
+
+endOfProgram: ; must not go beyond 10KB
+; This area will be memory values.
+; even if these get cut off by the 10KB memory card limit, they'll be initialized elsewhere anyway
 
 ; screen width / tile width, 120 / 8 + 1 = 16
 ; screen height / tile height, 64 / 8 + 1 = 9
@@ -589,21 +974,32 @@ SCREEN_MAP_W = 12
 SCREEN_MAP_H = SCREEN_TILES_H+1
 SCREEN_MAP_SIZE = SCREEN_MAP_W*SCREEN_MAP_H
 screenMap:
-    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t0, t0, t1, t1, t0, t1, t1, t0, t1, t1, t0
-    .word t1, t0, t0, t1, t0, t1, t1, t0, t1, t1, t0, t1
-    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t1, t0, t1, t0, t0, t1, t1, t0, t1, t1, t0
-    .word t1, t0, t1, t1, t0, t0, t1, t0, t1, t1, t0, t1
-    .word t0, t1, t1, t0, t1, t1, t0, t1, t1, t0, t1, t1
-    .word t1, t1, t0, t1, t1, t0, t1, t0, t0, t1, t1, t0
-    .word t1, t0, t1, t1, t0, t1, t1, t0, t0, t1, t0, t1
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+screenMapEnd:
 
-.EVEN
-
-endOfProgram: ; must not go beyond 10KB
-; This area will be memory values.
-; even if these get cut off by the 10KB memory card limit, they'll be initialized elsewhere anyway
+BLOCKTYPE_NOTHING = 0
+BLOCKTYPE_AIR = 1
+BLOCKTYPE_LAND = 2
+BLOCKTYPE_WATER = 3
+collisionMap:
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+collisionMapEnd:
 
 ; 2 screen pages
 screenTop0:
@@ -617,6 +1013,8 @@ screen1:
 scrptr:
     .word 0
 inkey:
+    .word 0
+randomSeed:
     .word 0
 
 ; state variables
