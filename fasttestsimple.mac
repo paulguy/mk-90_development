@@ -552,16 +552,16 @@ gen_no_AddOne:
     bne gen_done ; test if not 2 (PMOD_DOUBLE)
     inc (r5)
 gen_done: ; no need to check for PMOD_NOCHANGE, it'll just fall through
-    add #2, r4
-    add #2, r5
+    tst (r4)+ ; increment to next word
+    tst (r5)+
     sob r3, gen_next_prob
 
     rts pc
 
 gen:
-    gen_init_prob_air = 2
-    gen_init_prob_land = 1
-    gen_init_prob_water = 1
+    gen_init_prob_air = 3
+    gen_init_prob_land = 2
+    gen_init_prob_water = 2
     gen_init_double = 0 ; 1
 
     ; initial values
@@ -578,20 +578,20 @@ gen:
     add #collisionMap, r3
     mov r3, r2 ; save pointer
 
-    ; get left neighbor
+; get left neighbor
     mov #BLOCKTYPE_NOTHING, r1
     tst @#gen_x ; check if x is 0 so left neighbor would be nothing
     beq gen_leftNothing
     dec r3 ; neighbor to the left
     movb (r3), r1
 gen_leftNothing:
-    mul #prob_neigh_type_mul, r1
+    movb probability_ptrs(r1), r1
     ; left neighbor will generate probabilities for right neighbors
     add #probabilities_right, r1
 
     jsr pc, gen_gather
 
-    ; get right neighbor
+; get right neighbor
     mov r2, r3 ; restore pointer
 
     mov #BLOCKTYPE_NOTHING, r1
@@ -601,13 +601,13 @@ gen_leftNothing:
     inc r3 ; neighbor to the right
     movb (r3), r1
 gen_rightNothing:
-    mul #prob_neigh_type_mul, r1
+    movb probability_ptrs(r1), r1
     ; right neighbor will generate probabilities for left neighbors
     add #probabilities_left, r1
 
     jsr pc, gen_gather
 
-    ; get up neighbor
+; get up neighbor
     mov r2, r3 ; restore pointer
 
     mov #BLOCKTYPE_NOTHING, r1
@@ -616,13 +616,13 @@ gen_rightNothing:
     sub #SCREEN_MAP_W, r3 ; neighbor up
     movb (r3), r1
 gen_upNothing:
-    mul #prob_neigh_type_mul, r1
+    movb probability_ptrs(r1), r1
     ; up neighbor will generate probabilities for down neighbors
     add #probabilities_down, r1
 
     jsr pc, gen_gather
 
-    ; get down neighbor
+; get down neighbor
     mov r2, r3 ; restore pointer
 
     mov #BLOCKTYPE_NOTHING, r1
@@ -632,7 +632,7 @@ gen_upNothing:
     add #SCREEN_MAP_W, r3 ; neighbor down
     movb (r3), r1
 gen_downNothing:
-    mul #prob_neigh_type_mul, r1
+    movb probability_ptrs(r1), r1
     ; down neighbor will generate probabilities for up neighbors
     add #probabilities_up, r1
 
@@ -655,19 +655,19 @@ gen_downNothing:
     add @#gen_vals, @#gen_vals+2
     add @#gen_vals+2, @#gen_vals+4
 
-    ; get a value from 0 to max range
+    ; get a value from 0 to max range-1
     jsr pc, getRandom
     div @#gen_vals+4, r0 ; remainder is in r1
 
     tst @#gen_vals
-    beq gen_no_air
+    beq gen_no_air ; if 0, it has no range
     cmp r1, @#gen_vals
-    bge gen_no_air
-    movb #BLOCKTYPE_AIR, (r2)
+    bge gen_no_air ; if r1 >= value, it's outside of range
+    movb #BLOCKTYPE_AIR, (r2) ; otherwise set the tile and end
     br gen_found_block
 gen_no_air:
     cmp @#gen_vals, @#gen_vals+2
-    beq gen_no_land
+    beq gen_no_land ; if equal, it has no range
     cmp r1, @#gen_vals+2
     bge gen_no_land
     movb #BLOCKTYPE_LAND, (r2)
@@ -930,7 +930,6 @@ PMOD_NOCHANGE = 3
     ; each is in west, east, south, north order
 probabilities_start:
 probabilities_left:
-    ; nothing
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
 probabilities_right:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
@@ -938,24 +937,28 @@ probabilities_down:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
 probabilities_up:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
-prob_type:
-    ; air
+probabilities_air:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
     .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_DISALLOW
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
-    ; land
+probabilities_land:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_NOCHANGE
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
-    ; water
+probabilities_water:
     .byte PMOD_ADDONE, PMOD_DISALLOW, PMOD_DOUBLE
     .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
     .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
     .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
 
-prob_neigh_type_mul = prob_type-probabilities_start
+probability_ptrs:
+    .byte 0
+    .byte probabilities_air-probabilities_start
+    .byte probabilities_land-probabilities_start
+    .byte probabilities_water-probabilities_start
+
 .EVEN
 
 endOfProgram: ; must not go beyond 10KB

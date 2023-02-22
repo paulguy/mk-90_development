@@ -59,7 +59,7 @@ def setMap(data, x, y, w, val):
     data[w*y+x] = val
 
 def gen(data, x, y, w):
-    vals = [2, 1, 1]
+    vals = [3, 2, 2]
     double = [1, 1, 1]
     neighbors = [probabilities[BlockType.Nothing][0],
                  probabilities[BlockType.Nothing][1],
@@ -80,20 +80,17 @@ def gen(data, x, y, w):
         neighbors[3] = probabilities[BlockType(getMap(data, x - 1, y, w))][3]
     for neigh in neighbors:
         for num, pmod in enumerate(neigh):
-            if vals[num] < 0:
+            if vals[num] == 0:
                 continue
             if pmod == PMod.Disallow:
-                vals[num] = -1
+                vals[num] = 0
             elif pmod == PMod.AddOne:
                 vals[num] += 1
             elif pmod == PMod.Double:
                 double[num] *= 2
     for n, d in enumerate(double):
-        if vals[n] < 0:
-            vals[n] = 0
+        if vals[n] == 0:
             continue
-        else:
-            vals[n] += 1
         vals[n] *= d
     for n in range(len(vals)-1):
         vals[n+1] += vals[n]
