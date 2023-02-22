@@ -7,7 +7,7 @@
     .RADIX 10
 
 PLAYER_STARTX = SCREEN_TILES_W-3
-PLAYER_STARTY = 4 ; from the right
+PLAYER_STARTY = 3 ; from the right
 
 	.= 0		; Beginning of cartridge
     nop ; seems to be needed
@@ -537,11 +537,11 @@ gen_gather:
     mov #3, r3
 gen_next_prob:
     tst (r4) ; check if disallowed already
-    beq gen_disallowed
-    movb (r1), r0
+    beq gen_done
+    movb (r1)+, r0
     bne gen_no_Disallow ; test of not 0 (PMOD_DISALLOW)
     clr (r4) ; clear to 0 (disallowed)
-    br gen_disallowed ; no more to do
+    br gen_done ; no more to do
 gen_no_Disallow:
     dec r0
     bne gen_no_AddOne ; test if not 1 (PMOD_ADDONE)
@@ -552,11 +552,9 @@ gen_no_AddOne:
     bne gen_done ; test if not 2 (PMOD_DOUBLE)
     inc (r5)
 gen_done: ; no need to check for PMOD_NOCHANGE, it'll just fall through
-    inc r1
     add #2, r4
     add #2, r5
     sob r3, gen_next_prob
-gen_disallowed:
 
     rts pc
 
@@ -661,20 +659,18 @@ gen_downNothing:
     jsr pc, getRandom
     div @#gen_vals+4, r0 ; remainder is in r1
 
-    mov r2, r3 ; restore pointer
-
     tst @#gen_vals
     beq gen_no_air
     cmp r1, @#gen_vals
     bge gen_no_air
-    movb #BLOCKTYPE_AIR, (r3)
+    movb #BLOCKTYPE_AIR, (r2)
     br gen_found_block
 gen_no_air:
     cmp @#gen_vals, @#gen_vals+2
     beq gen_no_land
     cmp r1, @#gen_vals+2
     bge gen_no_land
-    movb #BLOCKTYPE_LAND, (r3)
+    movb #BLOCKTYPE_LAND, (r2)
     br gen_found_block
 gen_no_land:
     cmp @#gen_vals+2, @#gen_vals+4
@@ -683,7 +679,7 @@ gen_no_land:
     ; want the error state to be more obvious.
     cmp r1, @#gen_vals+4
     bge gen_no_water
-    movb #BLOCKTYPE_WATER, (r3)
+    movb #BLOCKTYPE_WATER, (r2)
 gen_no_water:
 gen_found_block:
 
@@ -702,12 +698,10 @@ collisionMapToTileMap:
 
     mov #SCREEN_MAP_W, r4
 cmap_next_tile:
-    movb (r2), r3 ; get type
+    movb (r2)+, r3 ; get type
     mul #t_air-t_none, r3 ; get pointer from type
     add #t_none, r3
-    mov r3, (r1) ; insert in to screen map
-    add #2, r1 ; next screen map pointer
-    inc r2 ; next collision map pointer
+    mov r3, (r1)+ ; insert in to screen map
     sob r4, cmap_next_tile
 
     rts pc
@@ -771,7 +765,7 @@ genDown:
 ; ########################################
 
 start:
-    mov #12345, @#randomSeed
+    mov #12346, @#randomSeed
 
 ; clear everything
     mov #screenMapEnd-screenMap+2, r0
