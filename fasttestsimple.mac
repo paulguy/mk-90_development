@@ -6,7 +6,7 @@
 	.ASECT		; Absolute section
     .RADIX 10
 
-PLAYER_STARTX = SCREEN_TILES_W-3
+PLAYER_STARTX = SCREEN_MAP_W-5
 PLAYER_STARTY = 3 ; from the right
 
 	.= 0		; Beginning of cartridge
@@ -132,20 +132,22 @@ waitGetKey:
     .word	keyIntHandle, 0000
 
 getRandom:
-    mov r1, -(sp)
-    mov @#randomSeed, r0
-    mov r0, r1
-    ash #7, r1
-    xor r1, r0
-    mov r0, r1
-    ash #-9, r1
-    bic #^B1111111110000000, r1
-    xor r1, r0
-    mov r0, r1
-    ash #8, r1
-    xor r1, r0
-    mov r0, @#randomSeed
-    mov (sp)+, r1
+    ; put random value in r1 (low bits for div go in r1)
+
+    mov r0, -(sp)
+    mov @#randomSeed, r1
+    mov r1, r0
+    ash #7, r0
+    xor r0, r1
+    mov r1, r0
+    ash #-9, r0
+    bic #^B1111111110000000, r0
+    xor r0, r1
+    mov r1, r0
+    ash #8, r0
+    xor r0, r1
+    mov r1, @#randomSeed
+    mov (sp)+, r0
     rts pc
 
 ; ########################################
@@ -582,8 +584,7 @@ gen:
     mov #BLOCKTYPE_NOTHING, r1
     tst @#gen_x ; check if x is 0 so left neighbor would be nothing
     beq gen_leftNothing
-    dec r3 ; neighbor to the left
-    movb (r3), r1
+    movb -1(r3), r1 ; neighbor to the left
 gen_leftNothing:
     movb probability_ptrs(r1), r1
     ; left neighbor will generate probabilities for right neighbors
@@ -598,8 +599,7 @@ gen_leftNothing:
     ; check if x is the far right so neighbor would be nothing
     cmp @#gen_x, #SCREEN_MAP_W-1
     beq gen_rightNothing
-    inc r3 ; neighbor to the right
-    movb (r3), r1
+    movb 1(r3), r1 ; neighbor to the right
 gen_rightNothing:
     movb probability_ptrs(r1), r1
     ; right neighbor will generate probabilities for left neighbors
@@ -613,8 +613,7 @@ gen_rightNothing:
     mov #BLOCKTYPE_NOTHING, r1
     tst @#gen_y ; check of y is 0 so up neighbor would be nothing
     beq gen_upNothing
-    sub #SCREEN_MAP_W, r3 ; neighbor up
-    movb (r3), r1
+    movb -SCREEN_MAP_W(r3), r1 ; neighbor up a row
 gen_upNothing:
     movb probability_ptrs(r1), r1
     ; up neighbor will generate probabilities for down neighbors
@@ -629,8 +628,7 @@ gen_upNothing:
     ; check if y is the far bottom so neighbor would be nothing
     cmp @#gen_y, #SCREEN_MAP_H-1
     beq gen_downNothing
-    add #SCREEN_MAP_W, r3 ; neighbor down
-    movb (r3), r1
+    movb SCREEN_MAP_W(r3), r1 ; neighbor down a row
 gen_downNothing:
     movb probability_ptrs(r1), r1
     ; down neighbor will generate probabilities for up neighbors
@@ -657,6 +655,7 @@ gen_downNothing:
 
     ; get a value from 0 to max range-1
     jsr pc, getRandom
+    clr r0
     div @#gen_vals+4, r0 ; remainder is in r1
 
     tst @#gen_vals
@@ -699,8 +698,8 @@ collisionMapToTileMap:
     mov #SCREEN_MAP_W, r4
 cmap_next_tile:
     movb (r2)+, r3 ; get type
-    mul #t_air-t_none, r3 ; get pointer from type
-    add #t_none, r3
+    rol r3 ; bytes to words
+    mov tile_ptrs(r3), r3
     mov r3, (r1)+ ; insert in to screen map
     sob r4, cmap_next_tile
 
@@ -723,6 +722,7 @@ genRight:
 
 genUp:
     jsr pc, getRandom
+    clr r0 ; clear high bits/negative
     div #SCREEN_MAP_W-2, r0
     ; r1 has the remainder
     inc r1 ; make sure there's space above and below
@@ -742,6 +742,7 @@ genUp:
 
 genDown:
     jsr pc, getRandom
+    clr r0
     div #SCREEN_MAP_W-2, r0
     ; r1 has the remainder
     inc r1 ; make sure there's space above and below
@@ -765,7 +766,7 @@ genDown:
 ; ########################################
 
 start:
-    mov #12346, @#randomSeed
+    mov #12345, @#randomSeed
 
 ; clear everything
     mov #screenMapEnd-screenMap+2, r0
@@ -781,8 +782,8 @@ clearCollisionMap:
     sob r0, clearCollisionMap
 
     ; starting platform
-    movb #BLOCKTYPE_AIR, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX
-    movb #BLOCKTYPE_LAND, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX+1
+    movb #BLOCKTYPE_AIR, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX+collisionMap
+    movb #BLOCKTYPE_LAND, @#SCREEN_MAP_W*PLAYER_STARTY+PLAYER_STARTX+collisionMap+1
 
     mov #PLAYER_STARTY, @#gen_y
 
@@ -868,17 +869,13 @@ noNegYDir:
 
 STRIP_W = 8
 bitmap:
-    .byte ^B01111110
-    .byte ^B10000001
-    .byte ^B10100101
-    .byte ^B10100101
-    .byte ^B10000001
-    .byte ^B10000001
-    .byte ^B10111101
-    .byte ^B10011001
-    .byte ^B10000001
-    .byte ^B01111110
-bitmap_H = 10
+    .byte ^B01100000
+    .byte ^B10011111
+    .byte ^B10011100
+    .byte ^B11111100
+    .byte ^B11111111
+    .byte ^B01111000
+bitmap_H = 6
 
 TILE_H = 8
 SCREEN_TILES_W = SCREEN_WIDTH/STRIP_W
@@ -922,6 +919,12 @@ t_water:
     .byte ^B11000000
     .byte ^B00001110
     .byte ^B00000000
+
+tile_ptrs:
+    .word t_none
+    .word t_air
+    .word t_land
+    .word t_water
 
 PMOD_DISALLOW = 0
 PMOD_ADDONE = 1
