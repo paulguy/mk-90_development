@@ -52,6 +52,9 @@ scratch: ; this can be used as memory after things are loaded
     SCREEN_EXTRA_MEM = SCREEN_EXTRA_ROWS*SCREEN_WIDTH_B
     SCREEN_PAGE = SCREEN_SIZE_B+SCREEN_EXTRA_MEM
 
+    KEY_UP = 59
+    KEY_DOWN = 63
+
 ; ########################################
 ; ##### Loader                       #####
 ; ########################################
@@ -112,7 +115,7 @@ keyIntHandle:
     mov r0, -(sp)
     mov r1, -(sp)
 
-    jsr pc, getRandom
+    ;jsr pc, getRandom
 
     mov #SMPBAUD, r1
     mov #8, (r1)+ ;@#SMPBAUD
@@ -141,7 +144,6 @@ getRandom:
     xor r0, r1
     mov r1, r0
     ash #-9, r0
-    bic #^B1111111110000000, r0
     xor r0, r1
     mov r1, r0
     ash #8, r0
@@ -525,6 +527,9 @@ tmWrapLookup:
     gen_x_save = scratch+4
     gen_vals = scratch+6 ; 3 words
     gen_double = scratch+12 ; 3 words
+    gen_dir = scratch+18 ; 0 = up, 1 = down
+GEN_UP = 0
+GEN_DOWN = 1
 
 gen_gather:
     ; r0 - not used
@@ -611,8 +616,13 @@ gen_rightNothing:
     mov r2, r3 ; restore pointer
 
     mov #BLOCKTYPE_NOTHING, r1
-    tst @#gen_y ; check of y is 0 so up neighbor would be nothing
-    beq gen_upNothing
+    tst @#gen_dir
+    beq gen_upNothing ; if dir is 0 (up), new tiles will have nothing up neighbors
+    tst @#gen_y ; check of y is > 0 to determine if next neighbor up doesn't need to wrap
+    bne gen_up_noWrap
+    ; if y is 0, r3 will just be the first row offset
+    add #SCREEN_MAP_SIZE, r3
+gen_up_noWrap:
     movb -SCREEN_MAP_W(r3), r1 ; neighbor up a row
 gen_upNothing:
     movb probability_ptrs(r1), r1
@@ -625,9 +635,14 @@ gen_upNothing:
     mov r2, r3 ; restore pointer
 
     mov #BLOCKTYPE_NOTHING, r1
+    tst @#gen_dir
+    bne gen_downNothing ; if dir is non-0 (down), new tiles will have nothing down neighbors
     ; check if y is the far bottom so neighbor would be nothing
     cmp @#gen_y, #SCREEN_MAP_H-1
-    beq gen_downNothing
+    beq gen_down_noWrap
+    ; if y is the map height, make it wrap back around to the top row
+    sub #SCREEN_MAP_SIZE, r3
+gen_down_noWrap:
     movb SCREEN_MAP_W(r3), r1 ; neighbor down a row
 gen_downNothing:
     movb probability_ptrs(r1), r1
@@ -720,7 +735,7 @@ genRight:
 
     rts pc
 
-genUp:
+genStrip:
     jsr pc, getRandom
     clr r0 ; clear high bits/negative
     div #SCREEN_MAP_W-2, r0
@@ -735,29 +750,96 @@ genUp:
     inc @#gen_x
     jsr pc, genRight
     jsr pc, collisionMapToTileMap
+
+    rts pc
+
+genUp:
+    mov #GEN_UP, @#gen_dir
+genUp_loop:
+    jsr pc, genStrip
     dec @#gen_y
-    bpl genUp
+    bpl genUp_loop
 
     rts pc
 
 genDown:
-    jsr pc, getRandom
-    clr r0
-    div #SCREEN_MAP_W-2, r0
-    ; r1 has the remainder
-    inc r1 ; make sure there's space above and below
-    mov r1, @#gen_x
-    mov r1, @#gen_x_save
-    jsr pc, gen
-    dec @#gen_x
-    jsr pc, genLeft
-    mov @#gen_x_save, @#gen_x
-    inc @#gen_x
-    jsr pc, genRight
-    jsr pc, collisionMapToTileMap
+    mov #GEN_DOWN, @#gen_dir
+genDown_loop:
+    jsr pc, genStrip
     inc @#gen_y
     cmp @#gen_y, #SCREEN_MAP_H
-    blt genDown
+    blt genDown_loop
+
+    rts pc
+
+scrollScreen:
+    scrollPX = arg
+    ; don't check for 0 to assure reasonably consistent performance by
+    ; always redrawing the screen
+
+    mov @#scrollPX, -(sp) ; save because gen routines will clobber args
+
+    mov @#bgY, r1
+    mov r1, r0
+    add (sp), r0
+
+    ash #-3, r0 ; convert pixels to columns
+    movb r0, r0 ; preserve sign (value should never be outside [-128, 127])
+    ash #-3, r1
+    movb r1, r1
+    sub r1, r0 ; get number of new columns to generate
+    beq scrollNone ; if 0, no map gen
+
+    mov r1, @#gen_y
+
+    mov #GEN_UP, @#gen_dir
+    mov r0, -(sp) ; save number of new columns
+    bmi scrollUp ; if negative, scroll up
+    mov #GEN_DOWN, @#gen_dir
+
+scrollDown:
+    jsr pc, genStrip
+    ; current column goes out of view first
+    inc @#gen_y
+    cmp @#gen_y, #SCREEN_MAP_H
+    blt scrollDown_noWrap
+    clr @#gen_y
+scrollDown_noWrap:
+    dec (sp)
+    bne scrollDown
+
+    br scrollDone
+
+scrollUp:
+    ; next column "up" is in view first
+    dec @#gen_y
+    bpl scrollUp_noWrap
+    mov #SCREEN_MAP_H-1, @#gen_y
+scrollUp_noWrap:
+    jsr pc, genStrip
+    inc (sp)
+    bne scrollUp
+
+scrollDone:
+    tst (sp)+ ; restore SP
+scrollNone:
+    mov (sp)+, r1 ; get back scroll amount
+    add @#bgY, r1 ; add current scroll amount
+    sxt r0 ; make high bits negative if negative
+    div #SCREEN_MAP_H_PX, r0 ; divide to get modulo map size
+    tst r1
+    bpl scrollVarUpdate_noWrap
+    add #SCREEN_MAP_H_PX, r1 ; if negative, wrap it around
+scrollVarUpdate_noWrap:
+    mov r1, @#bgY ; store new value back
+
+    mov @#bgY, @#tm_scrolly
+    bic #^B1111111111111000, @#tm_scrolly
+    mov @#bgY, r0
+    ash #-3, r0
+    bic #^B1111111111110000, r0
+    mov r0, @#tm_yoffset
+    jsr pc, drawTilemap
 
     rts pc
 
@@ -808,21 +890,26 @@ clearCollisionMap:
     mov #4, bgY ; start centered
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
+    ;mov #screen0, @#scrptr ; for when flipping disabled
+    clr @#scrollSpeed
 
 loop:
-    mov @#bgY, @#tm_scrolly
-    bic #^B1111111111111000, @#tm_scrolly
-    mov @#bgY, r0
-    ash #-3, r0
-    bic #^B1111111111110000, r0
-    mov r0, @#tm_yoffset
-    jsr pc, drawTilemap
-
-    inc @#bgY
-    cmp @#bgY, #9*8
-    blt noResetBGY
-    clr @#bgY
-noResetBGY:
+    cmp @#inkey, #KEY_UP
+    beq scrollDec
+    cmp @#inkey, #KEY_DOWN
+    beq scrollInc
+    br noScrollChg
+scrollDec:
+    dec @#scrollSpeed
+    clr @#inkey
+    br noScrollChg
+scrollInc:
+    inc @#scrollSpeed
+    clr @#inkey
+noScrollChg:
+    
+    mov @#scrollSpeed, @#scrollPX
+    jsr pc, scrollScreen
 
     mov #bitmap, @#bcopy_data
     mov #bitmap_H, @#bcopy_h
@@ -830,7 +917,7 @@ noResetBGY:
     mov @#bitmapy, @#bcopy_y
     jsr pc, drawbitmap
 
-    ; br noflipscr1 ; disable flipping
+    ;br noflipscr1 ; disable flipping
     cmp @#scrptr, #screen0
     beq flipscr1
     mov #screen1, @#LCDINA
@@ -973,6 +1060,7 @@ endOfProgram: ; must not go beyond 10KB
 SCREEN_MAP_W = 12
 SCREEN_MAP_H = SCREEN_TILES_H+1
 SCREEN_MAP_SIZE = SCREEN_MAP_W*SCREEN_MAP_H
+SCREEN_MAP_H_PX = SCREEN_MAP_H*TILE_H
 screenMap:
     .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -1027,6 +1115,8 @@ bitmapXDir:
 bitmapYDir:
     .word 0
 bgY:
+    .word 0
+scrollSpeed:
     .word 0
 
 endOfRAM: ; must not go beyond 16KB
