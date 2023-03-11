@@ -531,6 +531,7 @@ tmWrapLookup:
 GEN_UP = 0
 GEN_DOWN = 1
 
+;TODO Fix floating water
 gen_gather:
     ; r0 - not used
     ; r1 - pointer to probabilities
@@ -569,15 +570,15 @@ gen:
     gen_init_prob_air = 3
     gen_init_prob_land = 2
     gen_init_prob_water = 2
-    gen_init_double = 0 ; 1
 
     ; initial values
     mov #gen_init_prob_air, @#gen_vals
     mov #gen_init_prob_land, @#gen_vals+2
     mov #gen_init_prob_water, @#gen_vals+4
-    mov #gen_init_double, @#gen_double
-    mov #gen_init_double, @#gen_double+2
-    mov #gen_init_double, @#gen_double+4
+    ; start with no shift
+    clr @#gen_double
+    clr @#gen_double+2
+    clr @#gen_double+4
 
     mov @#gen_y, r3 ; y * width + x
     mul #SCREEN_MAP_W, r3
@@ -586,7 +587,7 @@ gen:
     mov r3, r2 ; save pointer
 
 ; get left neighbor
-    mov #BLOCKTYPE_NOTHING, r1
+    mov #BLOCKTYPE_AIR, r1
     tst @#gen_x ; check if x is 0 so left neighbor would be nothing
     beq gen_leftNothing
     movb -1(r3), r1 ; neighbor to the left
@@ -600,7 +601,7 @@ gen_leftNothing:
 ; get right neighbor
     mov r2, r3 ; restore pointer
 
-    mov #BLOCKTYPE_NOTHING, r1
+    mov #BLOCKTYPE_LAND, r1
     ; check if x is the far right so neighbor would be nothing
     cmp @#gen_x, #SCREEN_MAP_W-1
     beq gen_rightNothing
@@ -637,9 +638,9 @@ gen_upNothing:
     mov #BLOCKTYPE_NOTHING, r1
     tst @#gen_dir
     bne gen_downNothing ; if dir is non-0 (down), new tiles will have nothing down neighbors
-    ; check if y is the far bottom so neighbor would be nothing
+    ; check if y is the far bottom to determine if the pointer should wrap
     cmp @#gen_y, #SCREEN_MAP_H-1
-    beq gen_down_noWrap
+    bne gen_down_noWrap
     ; if y is the map height, make it wrap back around to the top row
     sub #SCREEN_MAP_SIZE, r3
 gen_down_noWrap:
@@ -671,7 +672,7 @@ gen_downNothing:
     ; get a value from 0 to max range-1
     jsr pc, getRandom
     clr r0
-    div @#gen_vals+4, r0 ; remainder is in r1
+    div @#gen_vals+4, r0 ; remainder will be in r1
 
     tst @#gen_vals
     beq gen_no_air ; if 0, it has no range
@@ -1029,7 +1030,7 @@ probabilities_up:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
 probabilities_air:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
-    .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_NOCHANGE
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
 probabilities_land:
