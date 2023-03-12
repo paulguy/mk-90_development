@@ -546,7 +546,7 @@ gen_gather:
 gen_next_prob:
     tst (r4) ; check if disallowed already
     beq gen_done
-    movb (r1)+, r0
+    movb (r1), r0
     bne gen_no_Disallow ; test of not 0 (PMOD_DISALLOW)
     clr (r4) ; clear to 0 (disallowed)
     br gen_done ; no more to do
@@ -562,6 +562,7 @@ gen_no_AddOne:
 gen_done: ; no need to check for PMOD_NOCHANGE, it'll just fall through
     tst (r4)+ ; increment to next word
     tst (r5)+
+    inc r1
     sob r3, gen_next_prob
 
     rts pc
@@ -587,7 +588,7 @@ gen:
     mov r3, r2 ; save pointer
 
 ; get left neighbor
-    mov #BLOCKTYPE_AIR, r1
+    mov #BLOCKTYPE_LAND, r1
     tst @#gen_x ; check if x is 0 so left neighbor would be nothing
     beq gen_leftNothing
     movb -1(r3), r1 ; neighbor to the left
@@ -1021,6 +1022,7 @@ PMOD_NOCHANGE = 3
     ; each is in west, east, south, north order
 probabilities_start:
 probabilities_left:
+    ; probability mod for air, land, water
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
 probabilities_right:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
@@ -1030,19 +1032,19 @@ probabilities_up:
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
 probabilities_air:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
-    .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_NOCHANGE
-    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
-    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_ADDONE
+    .byte PMOD_ADDONE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_ADDONE, PMOD_NOCHANGE, PMOD_DISALLOW
 probabilities_land:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_NOCHANGE
     .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
 probabilities_water:
-    .byte PMOD_ADDONE, PMOD_DISALLOW, PMOD_DOUBLE
-    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
-    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
-    .byte PMOD_DISALLOW, PMOD_ADDONE, PMOD_DOUBLE
+    .byte PMOD_NOCHANGE, PMOD_NOCHANGE, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_NOCHANGE, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_NOCHANGE, PMOD_DOUBLE
+    .byte PMOD_DISALLOW, PMOD_NOCHANGE, PMOD_DOUBLE
 
 probability_ptrs:
     .byte 0
