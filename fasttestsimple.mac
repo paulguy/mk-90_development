@@ -845,8 +845,8 @@ scrollVarUpdate_noWrap:
 
     rts pc
 
-PLAYER_ACCEL = 128
-PLAYER_MAX_SPEED = 512
+PLAYER_ACCEL = 96
+PLAYER_MAX_SPEED = 256 ; 1 tile length
 updatePlayerMovement:
     ; get player acceleration then take the sign from the player's y direction
     clr r0
@@ -888,11 +888,19 @@ pmove_no_min_y_speed:
     mov r0, @#scrollPX
 
     mov r1, r0
-    bic #^B0011111111111111, r0 ; save sign
+    bic #^B0001111111111111, r0 ; save sign
     mov r1, r2 ; get quarter speed
-    ash #-2, r2
+    ash #-3, r2
     bis r0, r2 ; restore sign
     sub r2, r1 ; subtract quarter speed
+    mov r1, r2 ; get absolute value-ish
+    sxt r0
+    xor r0, r2
+    ; check of least significant bits are too few to subtract
+    bit #^B1111111111111000, r2
+    bne pmove_no_smallest_y_speed
+    clr r1
+pmove_no_smallest_y_speed:
     mov r1, @#playerYSpeed ; store it back
 
     rts pc
