@@ -845,6 +845,58 @@ scrollVarUpdate_noWrap:
 
     rts pc
 
+PLAYER_ACCEL = 128
+PLAYER_MAX_SPEED = 512
+updatePlayerMovement:
+    ; get player acceleration then take the sign from the player's y direction
+    clr r0
+    mov @#playerYDir, r1
+    mov r1, @#screen0
+    beq pmove_no_accel
+    mov #PLAYER_ACCEL, r0
+    tst r1
+    sxt r1
+    ; this'll make it either N or -(n-1) but whichever
+    xor r1, r0
+pmove_no_accel:
+    mov r0, @#SCREEN_WIDTH_B+screen0
+
+    ; update player Y speed and clamp to 8 bit signed
+    mov @#playerYSpeed, r1
+    add r0, r1
+    cmp r1, #PLAYER_MAX_SPEED
+    ble pmove_no_max_y_speed
+    mov #PLAYER_MAX_SPEED, r1
+    br pmove_no_min_y_speed
+pmove_no_max_y_speed:
+    cmp r1, #-PLAYER_MAX_SPEED
+    bge pmove_no_min_y_speed
+    mov #-PLAYER_MAX_SPEED, r1
+pmove_no_min_y_speed:
+    mov r1, @#SCREEN_WIDTH_B*2+screen0
+    ; update player position
+    movb @#playerY, r0
+    add r1, r0
+    movb r0, @#playerY ; store back low byte (tile-local)
+
+    ; scroll the map by player speed
+    mov r1, r0
+    mov r1, r2
+    bic #^B0000011111111111, r2
+    ash #-5, r0 ; pos to pixels
+    bis r2, r0
+    mov r0, @#scrollPX
+
+    mov r1, r0
+    bic #^B0011111111111111, r0 ; save sign
+    mov r1, r2 ; get quarter speed
+    ash #-2, r2
+    bis r0, r2 ; restore sign
+    sub r2, r1 ; subtract quarter speed
+    mov r1, @#playerYSpeed ; store it back
+
+    rts pc
+
 ; ########################################
 ; ##### Start                        #####
 ; ########################################
@@ -885,41 +937,53 @@ clearCollisionMap:
     mov #PLAYER_STARTY+1, @#gen_y
     jsr pc, genDown
 
-    mov #0, @#bitmapx
-    mov #0, @#bitmapy
-    mov #1, @#bitmapXDir
-    mov #1, @#bitmapYDir
+    mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
+    ; Center player in tile
+    mov #TILE_H-plsprite_H/2*PX_PER_POS, @#playerY
+    clr @#playerXSpeed
+    clr @#playerYSpeed
+
     mov #4, bgY ; start centered
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
-    ;mov #screen0, @#scrptr ; for when flipping disabled
-    clr @#scrollSpeed
+    mov #screen0, @#scrptr ; for when flipping disabled
 
 loop:
+    clr @#playerXDir
+    clr @#playerYDir
+
     cmp @#inkey, #KEY_UP
-    beq scrollDec
+    beq moveRight
     cmp @#inkey, #KEY_DOWN
-    beq scrollInc
-    br noScrollChg
-scrollDec:
-    dec @#scrollSpeed
+    beq moveLeft
+    br latMoveDone
+moveRight:
+    dec @#playerYDir
     clr @#inkey
-    br noScrollChg
-scrollInc:
-    inc @#scrollSpeed
+    br latMoveDone
+moveLeft:
+    inc @#playerYDir
     clr @#inkey
-noScrollChg:
-    
-    mov @#scrollSpeed, @#scrollPX
+latMoveDone:
+
+    jsr pc, updatePlayerMovement
+
     jsr pc, scrollScreen
 
-    mov #bitmap, @#bcopy_data
-    mov #bitmap_H, @#bcopy_h
-    mov @#bitmapx, @#bcopy_x
-    mov @#bitmapy, @#bcopy_y
+    mov #plsprite, @#bcopy_data
+    mov #plsprite_H, @#bcopy_h
+    mov @#playerX, r0
+    ; convert X position to pixel position
+    ; 1 tile contains 256 possible positions on any axis
+    ; 8 pixels per tile -> 32 positions per pixel, must trim 5 bits
+    ash #-5, r0
+    add #8, r0 ; offset for top status bar
+    mov r0, @#bcopy_x
+    ; center player sprite on screen
+    mov #SCREEN_HEIGHT-plsprite_H/2, @#bcopy_y
     jsr pc, drawbitmap
 
-    ;br noflipscr1 ; disable flipping
+    br noflipscr1 ; disable flipping
     cmp @#scrptr, #screen0
     beq flipscr1
     mov #screen1, @#LCDINA
@@ -930,41 +994,19 @@ flipscr1:
 	mov	#screen1, @#scrptr
 noflipscr1:
 
-    add @#bitmapXDir, @#bitmapx
-    cmp @#bitmapx, #SCREEN_WIDTH-STRIP_W
-    bgt negXDir
-    cmp @#bitmapx, #0
-    blt negXDir
-    br noNegXDir
-negXDir:
-    neg @#bitmapXDir
-    add @#bitmapXDir, @#bitmapx
-noNegXDir:
-
-    add @#bitmapYDir, @#bitmapy
-    cmp @#bitmapy, #SCREEN_HEIGHT-bitmap_H
-    bgt negYDir
-    cmp @#bitmapy, #0
-    blt negYDir
-    br noNegYDir
-negYDir:
-    neg @#bitmapYDir
-    add @#bitmapYDir, @#bitmapy
-noNegYDir:
-
     jsr pc, getRandom
 
     br loop
 
 STRIP_W = 8
-bitmap:
+plsprite:
     .byte ^B01100000
     .byte ^B10011111
     .byte ^B10011100
     .byte ^B11111100
     .byte ^B11111111
     .byte ^B01111000
-bitmap_H = 6
+plsprite_H = 6
 
 TILE_H = 8
 SCREEN_TILES_W = SCREEN_WIDTH/STRIP_W
@@ -1000,14 +1042,14 @@ t_land:
     .byte ^B11111111
 
 t_water:
-    .byte ^B01100110
     .byte ^B00000000
-    .byte ^B01110000
-    .byte ^B00000111
-    .byte ^B00000000
-    .byte ^B11000000
-    .byte ^B00001110
-    .byte ^B00000000
+    .byte ^B10000100
+    .byte ^B10100100
+    .byte ^B00100010
+    .byte ^B10000010
+    .byte ^B11010000
+    .byte ^B11010010
+    .byte ^B10000010
 
 tile_ptrs:
     .word t_none
@@ -1033,11 +1075,11 @@ probabilities_up:
 probabilities_air:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
     .byte PMOD_DOUBLE, PMOD_ADDONE, PMOD_ADDONE
-    .byte PMOD_ADDONE, PMOD_NOCHANGE, PMOD_DISALLOW
-    .byte PMOD_ADDONE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
+    .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_DISALLOW
 probabilities_land:
     .byte PMOD_DOUBLE, PMOD_NOCHANGE, PMOD_NOCHANGE
-    .byte PMOD_ADDONE, PMOD_ADDONE, PMOD_NOCHANGE
+    .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_NOCHANGE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
     .byte PMOD_ADDONE, PMOD_DOUBLE, PMOD_ADDONE
 probabilities_water:
@@ -1109,17 +1151,22 @@ randomSeed:
     .word 0
 
 ; state variables
-bitmapX:
-    .word 0
-bitmapY:
-    .word 0
-bitmapXDir:
-    .word 0
-bitmapYDir:
-    .word 0
 bgY:
     .word 0
-scrollSpeed:
+
+POS_PER_TILE = 256 ; low bit for sub-tile pos
+PX_PER_POS = POS_PER_TILE/TILE_H
+playerX:
+    .word 0
+playerY:
+    .word 0
+playerXDir:
+    .byte 0
+playerYDir:
+    .byte 0
+playerXSpeed:
+    .word 0
+playerYSpeed:
     .word 0
 
 endOfRAM: ; must not go beyond 16KB
