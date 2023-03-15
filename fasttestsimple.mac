@@ -54,6 +54,7 @@ scratch: ; this can be used as memory after things are loaded
 
     KEY_UP = 59
     KEY_DOWN = 63
+    KEY_LEFT = 91
 
 ; ########################################
 ; ##### Loader                       #####
@@ -846,24 +847,14 @@ scrollVarUpdate_noWrap:
     rts pc
 
 PLAYER_ACCEL = 96
+PLAYER_THRUST = 64
+PLAYER_GRAV = 8
 PLAYER_MAX_SPEED = 256 ; 1 tile length
+PLAYER_MAX_X = SCREEN_MAP_W*8
 updatePlayerMovement:
-    ; get player acceleration then take the sign from the player's y direction
-    clr r0
-    mov @#playerYDir, r1
-    mov r1, @#screen0
-    beq pmove_no_accel
-    mov #PLAYER_ACCEL, r0
-    tst r1
-    sxt r1
-    ; this'll make it either N or -(n-1) but whichever
-    xor r1, r0
-pmove_no_accel:
-    mov r0, @#SCREEN_WIDTH_B+screen0
-
     ; update player Y speed and clamp to 8 bit signed
-    mov @#playerYSpeed, r1
-    add r0, r1
+    movb @#playerYDir, r1
+    add @#playerYSpeed, r1
     cmp r1, #PLAYER_MAX_SPEED
     ble pmove_no_max_y_speed
     mov #PLAYER_MAX_SPEED, r1
@@ -873,7 +864,6 @@ pmove_no_max_y_speed:
     bge pmove_no_min_y_speed
     mov #-PLAYER_MAX_SPEED, r1
 pmove_no_min_y_speed:
-    mov r1, @#SCREEN_WIDTH_B*2+screen0
     ; update player position
     movb @#playerY, r0
     add r1, r0
@@ -902,6 +892,45 @@ pmove_no_min_y_speed:
     clr r1
 pmove_no_smallest_y_speed:
     mov r1, @#playerYSpeed ; store it back
+
+    ; Do most of the same for the X axis, but simpler as there won't be any
+    ; friction, just gravity and reaching a max speed.
+    movb @#playerXDir, r0
+    bmi pmove_x_thrust
+    mov #PLAYER_GRAV, r0
+pmove_x_thrust:
+
+    ; update player X speed and clamp to 8 bit signed
+    mov @#playerXSpeed, r1
+    add r0, r1
+    cmp r1, #PLAYER_MAX_SPEED
+    ble pmove_no_max_x_speed
+    mov #PLAYER_MAX_SPEED, r1
+    br pmove_no_min_x_speed
+pmove_no_max_x_speed:
+    cmp r1, #-PLAYER_MAX_SPEED
+    bge pmove_no_min_x_speed
+    mov #-PLAYER_MAX_SPEED, r1
+pmove_no_min_x_speed:
+
+    ; update player position
+    mov @#playerX, r0
+    add r1, r0
+    ; clamp to [0, PLAYER_MAX_X-sprite height]
+    bpl pmove_no_min_x_pos
+    clr r0
+    ; make player "bonk"
+    clr r1
+    br pmove_no_max_x_pos
+pmove_no_min_x_pos:
+    cmp r0, #PLAYER_MAX_X-8*POS_PER_PX
+    blt pmove_no_max_x_pos
+    mov #PLAYER_MAX_X-8*POS_PER_PX, r0
+    clr r1
+pmove_no_max_x_pos:
+    ; store back new values
+    mov r0, @#playerX
+    mov r1, @#playerXSpeed
 
     rts pc
 
@@ -947,7 +976,7 @@ clearCollisionMap:
 
     mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
     ; Center player in tile
-    mov #TILE_H-plsprite_H/2*PX_PER_POS, @#playerY
+    mov #TILE_H-plsprite_H/2*POS_PER_PX, @#playerY
     clr @#playerXSpeed
     clr @#playerYSpeed
 
@@ -957,20 +986,27 @@ clearCollisionMap:
     mov #screen0, @#scrptr ; for when flipping disabled
 
 loop:
-    clr @#playerXDir
-    clr @#playerYDir
+    clrb @#playerXDir
+    clrb @#playerYDir
+    mov @#inkey, @#screen0
 
     cmp @#inkey, #KEY_UP
     beq moveRight
     cmp @#inkey, #KEY_DOWN
     beq moveLeft
+    cmp @#inkey, #KEY_LEFT
+    beq thrust
     br latMoveDone
 moveRight:
-    dec @#playerYDir
+    movb #-PLAYER_ACCEL, @#playerYDir
     clr @#inkey
     br latMoveDone
 moveLeft:
-    inc @#playerYDir
+    movb #PLAYER_ACCEL, @#playerYDir
+    clr @#inkey
+    br latMoveDone
+thrust:
+    movb #-PLAYER_THRUST, @#playerXDir
     clr @#inkey
 latMoveDone:
 
@@ -1163,7 +1199,7 @@ bgY:
     .word 0
 
 POS_PER_TILE = 256 ; low bit for sub-tile pos
-PX_PER_POS = POS_PER_TILE/TILE_H
+POS_PER_PX = POS_PER_TILE/TILE_H
 playerX:
     .word 0
 playerY:
