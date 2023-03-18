@@ -775,6 +775,10 @@ genDown_loop:
 
     rts pc
 
+; ########################################
+; ##### Screen Scrolling             #####
+; ########################################
+
 scrollScreen:
     scrollPX = arg
     ; don't check for 0 to assure reasonably consistent performance by
@@ -786,9 +790,9 @@ scrollScreen:
     mov r1, r0
     add (sp), r0
 
-    ash #-3, r0 ; convert pixels to columns
+    ash #-8, r0 ; convert position to columns
     movb r0, r0 ; preserve sign (value should never be outside [-128, 127])
-    ash #-3, r1
+    ash #-8, r1
     movb r1, r1
     sub r1, r0 ; get number of new columns to generate
     beq scrollNone ; if 0, no map gen
@@ -829,16 +833,18 @@ scrollNone:
     mov (sp)+, r1 ; get back scroll amount
     add @#bgY, r1 ; add current scroll amount
     sxt r0 ; make high bits negative if negative
-    div #SCREEN_MAP_H_PX, r0 ; divide to get modulo map size
+    div #SCREEN_MAP_H_PX*POS_PER_PX, r0 ; divide to get modulo map size
     tst r1
     bpl scrollVarUpdate_noWrap
-    add #SCREEN_MAP_H_PX, r1 ; if negative, wrap it around
+    add #SCREEN_MAP_H_PX*POS_PER_PX, r1 ; if negative, wrap it around
 scrollVarUpdate_noWrap:
     mov r1, @#bgY ; store new value back
 
-    mov @#bgY, @#tm_scrolly
+    ; draw the background
+    ash #-5, r1
+    mov r1, @#tm_scrolly
     bic #^B1111111111111000, @#tm_scrolly
-    mov @#bgY, r0
+    mov r1, r0
     ash #-3, r0
     bic #^B1111111111110000, r0
     mov r0, @#tm_yoffset
@@ -846,91 +852,182 @@ scrollVarUpdate_noWrap:
 
     rts pc
 
-PLAYER_ACCEL = 96
+; ########################################
+; ##### Player Movement              #####
+; ########################################
+
+PLAYER_ACCEL = 16
 PLAYER_THRUST = 64
 PLAYER_GRAV = 8
-PLAYER_MAX_SPEED = 256 ; 1 tile length
+PLAYER_MAX_SPEED = 255 ; 1 tile length
 PLAYER_MAX_X = SCREEN_MAP_W*8
 updatePlayerMovement:
     ; update player Y speed and clamp to 8 bit signed
-    movb @#playerYDir, r1
-    add @#playerYSpeed, r1
-    cmp r1, #PLAYER_MAX_SPEED
+    movb @#playerYDir, r2
+    add @#playerYSpeed, r2
+    cmp r2, #PLAYER_MAX_SPEED
     ble pmove_no_max_y_speed
-    mov #PLAYER_MAX_SPEED, r1
+    mov #PLAYER_MAX_SPEED, r2
     br pmove_no_min_y_speed
 pmove_no_max_y_speed:
-    cmp r1, #-PLAYER_MAX_SPEED
+    cmp r2, #-PLAYER_MAX_SPEED
     bge pmove_no_min_y_speed
-    mov #-PLAYER_MAX_SPEED, r1
+    mov #-PLAYER_MAX_SPEED, r2
 pmove_no_min_y_speed:
-    ; update player position
-    movb @#playerY, r0
-    add r1, r0
-    movb r0, @#playerY ; store back low byte (tile-local)
+    mov r2, @#scrollPX
 
-    ; scroll the map by player speed
-    mov r1, r0
-    mov r1, r2
-    bic #^B0000011111111111, r2
-    ash #-5, r0 ; pos to pixels
-    bis r2, r0
-    mov r0, @#scrollPX
+    ; get player tilemap pos
+    mov @#bgY, r1
+    add r2, r1
+    ; get center pos
+    add #TILE_H*3+5*POS_PER_PX, r1
+    ; wrap position to map height (in position units)
+    cmp r1, #SCREEN_MAP_H_PX*POS_PER_PX
+    blt pmove_screen_y_center_nowrap
+    sub #SCREEN_MAP_H_PX*POS_PER_PX, r1
+pmove_screen_y_center_nowrap:
 
-    mov r1, r0
-    bic #^B0001111111111111, r0 ; save sign
-    mov r1, r2 ; get quarter speed
-    ash #-3, r2
-    bis r0, r2 ; restore sign
-    sub r2, r1 ; subtract quarter speed
-    mov r1, r2 ; get absolute value-ish
-    sxt r0
-    xor r0, r2
+    ; apply friction
+    mov r2, r3 ; save sign
+    bic #^B0001111111111111, r3
+    mov r2, r4 ; get quarter speed
+    ash #-3, r4
+    bis r3, r4 ; restore sign
+    sub r4, r2 ; subtract quarter speed
+    mov r2, r3 ; get absolute value-ish
+    sxt r4
+    xor r4, r3
     ; check of least significant bits are too few to subtract
-    bit #^B1111111111111000, r2
+    bit #^B1111111111111000, r3
     bne pmove_no_smallest_y_speed
-    clr r1
+    clr r2
 pmove_no_smallest_y_speed:
-    mov r1, @#playerYSpeed ; store it back
+    mov r2, @#playerYSpeed ; store it back
 
     ; Do most of the same for the X axis, but simpler as there won't be any
-    ; friction, just gravity and reaching a max speed.
-    movb @#playerXDir, r0
-    bmi pmove_x_thrust
-    mov #PLAYER_GRAV, r0
-pmove_x_thrust:
-
-    ; update player X speed and clamp to 8 bit signed
-    mov @#playerXSpeed, r1
-    add r0, r1
-    cmp r1, #PLAYER_MAX_SPEED
+    ; update player X speed
+    movb @#playerXDir, r2
+    add @#playerXSpeed, r2
+    cmp r2, #PLAYER_MAX_SPEED
     ble pmove_no_max_x_speed
-    mov #PLAYER_MAX_SPEED, r1
+    mov #PLAYER_MAX_SPEED, r2
     br pmove_no_min_x_speed
 pmove_no_max_x_speed:
-    cmp r1, #-PLAYER_MAX_SPEED
+    cmp r2, #-PLAYER_MAX_SPEED
     bge pmove_no_min_x_speed
-    mov #-PLAYER_MAX_SPEED, r1
+    mov #-PLAYER_MAX_SPEED, r2
 pmove_no_min_x_speed:
 
     ; update player position
     mov @#playerX, r0
-    add r1, r0
+    add r2, r0 ; make new value
     ; clamp to [0, PLAYER_MAX_X-sprite height]
     bpl pmove_no_min_x_pos
     clr r0
     ; make player "bonk"
-    clr r1
+    clr r2
     br pmove_no_max_x_pos
 pmove_no_min_x_pos:
     cmp r0, #PLAYER_MAX_X-8*POS_PER_PX
     blt pmove_no_max_x_pos
     mov #PLAYER_MAX_X-8*POS_PER_PX, r0
-    clr r1
+    clr r2
 pmove_no_max_x_pos:
-    ; store back new values
+    ; store back new speed
+    mov r2, @#playerXSpeed
+
+    ; if speed is negative, evaluate left
+    bmi pmove_left
+
+; otherwise evaluate right movement
+    mov r1, r3 ; get new Y tile pos
+    ash #-8, r3
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    mov r0, r2 ; get new X tile pos
+    ash #-8, r2
+    add r2, r3 ; add column
+    inc r3 ; next column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_right_bonk
+    ; get bottom left corner coord
+    mov r1, r3
+    ; add player sprite height in position units
+    add #plsprite_H-1*POS_PER_PX, r3
+    ; wrap position to map height (in position units)
+    cmp r3, #SCREEN_MAP_H_PX*POS_PER_PX
+    blt pmove_right_screen_y_nowrap
+    sub #SCREEN_MAP_H_PX*POS_PER_PX, r3
+pmove_right_screen_y_nowrap:
+    ; convert to tile location
+    ash #-8, r3
+    ; check if solid
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    add r2, r3 ; add column
+    inc r3 ; next column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_right_bonk
+  
+    br pmove_up_down
+
+pmove_right_bonk:
+    ; move playerX to tile boundary
+    bic #^B11111111, r0
+    ; no need to move over
+    ; stop movement
+    clr @#playerXSpeed
+
+    br pmove_up_down
+
+pmove_left:
+    mov r1, r3 ; get new Y tile pos
+    ash #-8, r3
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    mov r0, r2 ; get new X tile pos
+    ash #-8, r2
+    add r2, r3 ; add column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_left_bonk
+    ; get bottom left corner coord
+    mov r1, r3
+    ; add player sprite height in position units
+    add #plsprite_H-1*POS_PER_PX, r3
+    ; wrap position to map height (in position units)
+    cmp r3, #SCREEN_MAP_H_PX*POS_PER_PX
+    blt pmove_left_screen_y_nowrap
+    sub #SCREEN_MAP_H_PX*POS_PER_PX, r3
+pmove_left_screen_y_nowrap:
+    ; convert to tile location
+    ash #-8, r3
+    ; check if solid
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    add r2, r3 ; add column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_left_bonk
+  
+    br pmove_up_down
+
+pmove_left_bonk:
+    ; move playerX to tile boundary
+    bic #^B11111111, r0
+    ; move over 1 tile
+    add #256, r0
+    ; stop movement
+    clr @#playerXSpeed
+
+pmove_up_down:
+    tst @#playerYSpeed
+    blt pmove_up
+    bgt pmove_down
+    br pmove_done
+
+pmove_up:
+    br pmove_done
+pmove_down:
+
+pmove_done:
+
     mov r0, @#playerX
-    mov r1, @#playerXSpeed
+    jsr pc, scrollScreen
 
     rts pc
 
@@ -975,20 +1072,18 @@ clearCollisionMap:
     jsr pc, genDown
 
     mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
-    ; Center player in tile
-    mov #TILE_H-plsprite_H/2*POS_PER_PX, @#playerY
     clr @#playerXSpeed
     clr @#playerYSpeed
 
-    mov #4, bgY ; start centered
+    mov #4*POS_PER_PX, bgY ; start centered
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
     mov #screen0, @#scrptr ; for when flipping disabled
 
 loop:
-    clrb @#playerXDir
+    movb #PLAYER_GRAV, @#playerXDir
     clrb @#playerYDir
-    mov @#inkey, @#screen0
+    ;mov @#inkey, @#screen0
 
     cmp @#inkey, #KEY_UP
     beq moveRight
@@ -1011,8 +1106,6 @@ thrust:
 latMoveDone:
 
     jsr pc, updatePlayerMovement
-
-    jsr pc, scrollScreen
 
     mov #plsprite, @#bcopy_data
     mov #plsprite_H, @#bcopy_h
@@ -1201,8 +1294,6 @@ bgY:
 POS_PER_TILE = 256 ; low bit for sub-tile pos
 POS_PER_PX = POS_PER_TILE/TILE_H
 playerX:
-    .word 0
-playerY:
     .word 0
 playerXDir:
     .byte 0
