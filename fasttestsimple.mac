@@ -7,7 +7,7 @@
     .RADIX 10
 
 PLAYER_STARTX = SCREEN_MAP_W-5
-PLAYER_STARTY = 3 ; from the right
+PLAYER_STARTY = 4 ; from the right
 
 	.= 0		; Beginning of cartridge
     nop ; seems to be needed
@@ -249,9 +249,8 @@ copyBitmapTop:
 
     neg r2 ; ash shifts right for negatives
 
-    ; get a bit mask to clear from the screen word
-    mov #^B0000000011111111, r5
-    ash r2, r5 ; shift right
+    ; hold a frequent value in a free pointer
+    mov #SCREEN_WIDTH_B, r5
 
 leftStripLoopTop:
     movb (r0)+, r4 ; get bitmap byte
@@ -260,12 +259,11 @@ leftStripLoopTop:
     
     mov (sp), r3 ; get screen word
 
-    bicb r5, r3 ; clear bits
-    bisb r4, r3 ; set bitmap bits in to screen word
+    bicb r4, r3 ; set bitmap bits in to screen word
 
     mov r3, (sp) ; write back to screen
 
-    add #SCREEN_WIDTH_B, sp ; next screen row
+    add r5, sp ; next screen row
     sob r1, leftStripLoopTop
 
     mov @#bcopy_data, r0 ; restore bitmap pointer in to r0
@@ -276,7 +274,6 @@ leftStripLoopTop:
     mov @#bcopy_remaining_rows, r1 ; restore height
 
     add #8, r2 ; switch back to left shift
-    com r5 ; get leftside mask
 
 rightStripLoopTop:
     movb (r0)+, r4 ; get bitmap byte
@@ -285,12 +282,11 @@ rightStripLoopTop:
 
     mov (sp), r3 ; get screen word
 
-    bicb r5, r3 ; clear bits
-    bisb r4, r3 ; set bitmap bits in to screen word
+    bicb r4, r3 ; set bitmap bits in to screen word
 
     mov r3, (sp) ; write back to screen
 
-    add #SCREEN_WIDTH_B, sp ; update screen pointer
+    add r5, sp ; update screen pointer
     sob r1, rightStripLoopTop
 
     mov @#bcopy_sp, sp
@@ -305,8 +301,7 @@ centerStripSimpleLoopTop:
 
     mov (sp), r3 ; get screen word
 
-    bic r5, r3 ; clear low bits
-    bisb r4, r3 ; write bitmap in to screen word
+    bicb r4, r3 ; write bitmap in to screen word
 
     mov r3, (sp) ; write word back to screen
 
@@ -348,9 +343,8 @@ copyBitmapBottom:
 
     neg r2 ; ash shifts right for negatives
 
-    ; get a bit mask to clear from the screen word
-    mov #^B0000000011111111, r5
-    ash r2, r5 ; shift right
+    ; hold a frequent value in a free pointer
+    mov #SCREEN_WIDTH_B, r5
 
 leftStripLoopBottom:
     movb (r0)+, r4 ; get bitmap byte
@@ -360,13 +354,12 @@ leftStripLoopBottom:
     mov (sp), r3 ; get screen word
     swab r3
 
-    bicb r5, r3 ; clear bits
-    bisb r4, r3 ; set bitmap bits in to screen word
+    bicb r4, r3 ; set bitmap bits in to screen word
 
     swab r3
     mov r3, (sp) ; write back to screen
 
-    add #SCREEN_WIDTH_B, sp ; next screen row
+    add r5, sp ; next screen row
     sob r1, leftStripLoopBottom
 
     mov @#bcopy_data, r0 ; restore bitmap pointer in to r0
@@ -377,7 +370,6 @@ leftStripLoopBottom:
     mov @#bcopy_remaining_rows, r1 ; restore height
 
     add #8, r2 ; switch back to left shift
-    com r5 ; get leftside mask
 
 rightStripLoopBottom:
     movb (r0)+, r4 ; get bitmap byte
@@ -387,13 +379,12 @@ rightStripLoopBottom:
     mov (sp), r3 ; get screen word
     swab r3
 
-    bicb r5, r3 ; clear bits
-    bisb r4, r3 ; set bitmap bits in to screen word
+    bicb r4, r3 ; set bitmap bits in to screen word
 
     swab r3
     mov r3, (sp) ; write back to screen
 
-    add #SCREEN_WIDTH_B, sp ; update screen pointer
+    add r5, sp ; update screen pointer
     sob r1, rightStripLoopBottom
 
     mov @#bcopy_sp, sp
@@ -409,8 +400,7 @@ centerStripSimpleLoopBottom:
     mov (sp), r3 ; get screen word
     swab r3
 
-    bic r5, r3 ; clear low bits
-    bisb r4, r3 ; write bitmap in to screen word
+    bicb r4, r3 ; write bitmap in to screen word
 
     swab r3
     mov r3, (sp) ; write word back to screen
@@ -702,23 +692,53 @@ gen_found_block:
 
     rts pc
 
-collisionMapToTileMap:
-    ; TODO: conditional or random variation tiles
-    mov @#gen_y, r1
-    mul #SCREEN_MAP_W, r1
-    add #collisionMap, r1
-    mov r1, r2
+AIR2_CHANCE = 5
 
-    mov @#gen_y, r1
-    mul #SCREEN_MAP_W*2, r1
-    add #screenMap, r1
+collisionMapToTileMap:
+    mov @#gen_y, r5
+    mul #SCREEN_MAP_W, r5
+    add #collisionMap, r5
+    mov r5, r2
+
+    mov @#gen_y, r5
+    mul #SCREEN_MAP_W*2, r5
+    add #screenMap, r5
 
     mov #SCREEN_MAP_W, r4
+    movb (r2)+, r3 ; get type
+    br cmap_no_top
+
 cmap_next_tile:
     movb (r2)+, r3 ; get type
+    cmp r3, #BLOCKTYPE_LAND
+    bne cmap_no_land_top
+    cmpb -2(r2), #BLOCKTYPE_LAND
+    beq cmap_no_land_top
+    mov #t_land_top, (r5)+
+    br cmap_tile_done
+cmap_no_land_top:
+    cmp r3, #BLOCKTYPE_WATER
+    bne cmap_no_water_top
+    cmpb -2(r2), #BLOCKTYPE_AIR
+    bne cmap_no_water_top
+    mov #t_water_top, (r5)+
+    br cmap_tile_done
+cmap_no_water_top:
+cmap_no_top:
+    cmp r3, #BLOCKTYPE_AIR
+    bne cmap_not_air2
+    jsr pc, getRandom
+    clr r0
+    div #AIR2_CHANCE, r0
+    tst r1
+    bne cmap_not_air2
+    mov #t_air2, (r5)+
+    br cmap_tile_done
+cmap_not_air2:
     rol r3 ; bytes to words
     mov tile_ptrs(r3), r3
-    mov r3, (r1)+ ; insert in to screen map
+    mov r3, (r5)+ ; insert in to screen map
+cmap_tile_done:
     sob r4, cmap_next_tile
 
     rts pc
@@ -1238,34 +1258,64 @@ t_none:
     .byte ^B11111111
 
 t_air:
-    .byte ^B00000000
-    .byte ^B00000000
-    .byte ^B01000000
-    .byte ^B00000000
-    .byte ^B00000000
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111111
+
+t_air2:
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11011111
+    .byte ^B11111111
+    .byte ^B11111111
+    .byte ^B11111011
+    .byte ^B11110111
+    .byte ^B11111111
+
+t_land_top:
+    .byte ^B01010110
+    .byte ^B00101101
     .byte ^B00000100
-    .byte ^B00001000
-    .byte ^B00000000
+    .byte ^B00001011
+    .byte ^B00010100
+    .byte ^B01000101
+    .byte ^B00101010
+    .byte ^B00010101
 
 t_land:
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
-    .byte ^B11111111
+    .byte ^B00101001
+    .byte ^B10010110
+    .byte ^B01101010
+    .byte ^B10010101
+    .byte ^B10001100
+    .byte ^B01010010
+    .byte ^B10100101
+    .byte ^B01001010
+
+t_water_top:
+    .byte ^B10111111
+    .byte ^B01011011
+    .byte ^B01011011
+    .byte ^B11011101
+    .byte ^B01111101
+    .byte ^B00101111
+    .byte ^B00101101
+    .byte ^B00111101
 
 t_water:
-    .byte ^B00000000
-    .byte ^B10000100
-    .byte ^B10100100
-    .byte ^B00100010
-    .byte ^B10000010
-    .byte ^B11010000
-    .byte ^B11010010
-    .byte ^B10000010
+    .byte ^B11111011
+    .byte ^B11111011
+    .byte ^B10111011
+    .byte ^B10111111
+    .byte ^B10111110
+    .byte ^B11101110
+    .byte ^B11101110
+    .byte ^B11111111
 
 tile_ptrs:
     .word t_none
