@@ -692,6 +692,7 @@ gen_found_block:
 
     rts pc
 
+COIN_CHANCE = 20
 AIR2_CHANCE = 5
 
 collisionMapToTileMap:
@@ -727,6 +728,17 @@ cmap_no_water_top:
 cmap_no_top:
     cmp r3, #BLOCKTYPE_AIR
     bne cmap_not_air2
+    cmpb (r2), #BLOCKTYPE_AIR
+    bne cmap_not_coin
+    jsr pc, getRandom
+    clr r0
+    div #COIN_CHANCE, r0
+    tst r1
+    bne cmap_not_coin
+    movb #BLOCKTYPE_COIN, -1(r2)
+    mov #t_coin, (r5)+
+    br cmap_tile_done
+cmap_not_coin:
     jsr pc, getRandom
     clr r0
     div #AIR2_CHANCE, r0
@@ -882,6 +894,24 @@ PLAYER_GRAV = 8
 PLAYER_MAX_SPEED = 255 ; 1 tile length
 PLAYER_MAX_X = SCREEN_MAP_W*8
 updatePlayerMovement:
+    tst @#inWater
+    beq pmove_not_in_water
+    movb @#playerXdir, r0
+    mov r0, r1
+    bic #^B0011111111111111, r0
+    asr r1
+    asr r1
+    bis r0, r1
+    movb r1, @#playerXDir
+    movb @#playerYdir, r0
+    mov r0, r1
+    bic #^B0011111111111111, r0
+    asr r1
+    asr r1
+    bis r0, r1
+    movb r1, @#playerYDir
+pmove_not_in_water:
+
     ; update player Y speed and clamp to 8 bit signed
     movb @#playerYDir, r2
     add @#playerYSpeed, r2
@@ -1114,6 +1144,89 @@ pmove_up_bonk:
 
 pmove_done:
 
+; check if player is colliding with a coin or in water
+    clr @#inWater
+
+    mov r1, r3 ; get new Y tile pos
+    ash #-8, r3
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    mov r0, r2 ; get new X tile pos
+    ash #-8, r2
+    add r2, r3 ; add column
+    movb collisionMap(r3), r4
+    cmp r4, #BLOCKTYPE_COIN
+    bne pmove_not_coin_tl
+    movb #BLOCKTYPE_AIR, collisionMap(r3)
+    asl r3 ; bytes to words
+    mov #t_air, screenMap(r3)
+    asr r3
+    inc @#coins
+    br pmove_not_water_tl
+pmove_not_coin_tl:
+    cmp r4, #BLOCKTYPE_WATER
+    bne pmove_not_water_tl
+    inc @#inWater
+pmove_not_water_tl:
+    inc r3
+    movb collisionMap(r3), r4
+    cmp r4, #BLOCKTYPE_COIN
+    bne pmove_not_coin_tr
+    movb #BLOCKTYPE_AIR, collisionMap(r3)
+    asl r3 ; bytes to words
+    mov #t_air, screenMap(r3)
+    asr r3
+    inc @#coins
+    br pmove_not_water_tr
+pmove_not_coin_tl:
+pmove_not_coin_tr:
+    cmp r4, #BLOCKTYPE_WATER
+    bne pmove_not_water_tr
+    inc @#inWater
+pmove_not_water_tr:
+    ; get bottom left corner coord
+    mov r1, r3
+    ; add player sprite height in position units
+    add #plsprite_H-1*POS_PER_PX, r3
+    ; wrap position to map height (in position units)
+    cmp r3, #SCREEN_MAP_H_PX*POS_PER_PX
+    blt pmove_coin_check_y_nowrap
+    sub #SCREEN_MAP_H_PX*POS_PER_PX, r3
+pmove_coin_check_y_nowrap:
+    ; convert to tile location
+    ash #-8, r3
+    ; check if solid
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    add r2, r3 ; add column
+    movb collisionMap(r3), r4
+    cmp r4, #BLOCKTYPE_COIN
+    bne pmove_not_coin_bl
+    movb #BLOCKTYPE_AIR, collisionMap(r3)
+    asl r3 ; bytes to words
+    mov #t_air, screenMap(r3)
+    asr r3
+    inc @#coins
+    br pmove_not_water_bl
+pmove_not_coin_bl:
+    cmp r4, #BLOCKTYPE_WATER
+    bne pmove_not_water_bl
+    inc @#inWater
+pmove_not_water_bl:
+    inc r3
+    movb collisionMap(r3), r4
+    cmp r4, #BLOCKTYPE_COIN
+    bne pmove_not_coin_br
+    movb #BLOCKTYPE_AIR, collisionMap(r3)
+    asl r3 ; bytes to words
+    mov #t_air, screenMap(r3)
+    asr r3
+    inc @#coins
+    br pmove_not_water_br
+pmove_not_coin_br:
+    cmp r4, #BLOCKTYPE_WATER
+    bne pmove_not_water_br
+    inc @#inWater
+pmove_not_water_br:
+
     mov r0, @#playerX
     jsr pc, scrollScreen
 
@@ -1163,6 +1276,8 @@ clearCollisionMap:
     clr @#playerXSpeed
     clr @#playerYSpeed
     mov #plspriteR, @#plsprite
+    clr @#coins
+    clr @#inWater
 
     mov #4*POS_PER_PX, bgY ; start centered
     mov #screen0, @#LCDINA
@@ -1317,6 +1432,16 @@ t_water:
     .byte ^B11101110
     .byte ^B11111111
 
+t_coin:
+    .byte ^B11100111
+    .byte ^B10011001
+    .byte ^B10111101
+    .byte ^B01000010
+    .byte ^B01000010
+    .byte ^B10111101
+    .byte ^B10011001
+    .byte ^B11100111
+
 tile_ptrs:
     .word t_none
     .word t_air
@@ -1388,6 +1513,7 @@ BLOCKTYPE_NOTHING = 0
 BLOCKTYPE_AIR = 1
 BLOCKTYPE_LAND = 2
 BLOCKTYPE_WATER = 3
+BLOCKTYPE_COIN = 4
 collisionMap:
     .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -1433,6 +1559,10 @@ playerXSpeed:
 playerYSpeed:
     .word 0
 plsprite:
+    .word 0
+coins:
+    .word 0
+inWater:
     .word 0
 
 endOfRAM: ; must not go beyond 16KB
