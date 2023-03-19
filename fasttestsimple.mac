@@ -856,7 +856,7 @@ scrollVarUpdate_noWrap:
 ; ##### Player Movement              #####
 ; ########################################
 
-PLAYER_ACCEL = 16
+PLAYER_ACCEL = 96
 PLAYER_THRUST = 64
 PLAYER_GRAV = 8
 PLAYER_MAX_SPEED = 255 ; 1 tile length
@@ -966,7 +966,7 @@ pmove_right_screen_y_nowrap:
     inc r3 ; next column
     cmpb collisionMap(r3), #BLOCKTYPE_LAND
     beq pmove_right_bonk
-  
+
     br pmove_up_down
 
 pmove_right_bonk:
@@ -1003,7 +1003,7 @@ pmove_left_screen_y_nowrap:
     add r2, r3 ; add column
     cmpb collisionMap(r3), #BLOCKTYPE_LAND
     beq pmove_left_bonk
-  
+
     br pmove_up_down
 
 pmove_left_bonk:
@@ -1015,14 +1015,82 @@ pmove_left_bonk:
     clr @#playerXSpeed
 
 pmove_up_down:
-    tst @#playerYSpeed
+    tst @#scrollPX ; check which direction is tried to be moved
     blt pmove_up
-    bgt pmove_down
+
+; handle down direction
+    ; get bottom left corner coord
+    mov r1, r3
+    ; add player sprite height in position units
+    add #plsprite_H-1*POS_PER_PX, r3
+    ; wrap position to map height (in position units)
+    cmp r3, #SCREEN_MAP_H_PX*POS_PER_PX
+    blt pmove_down_screen_y_nowrap
+    sub #SCREEN_MAP_H_PX*POS_PER_PX, r3
+pmove_down_screen_y_nowrap:
+    ; convert to tile location
+    ash #-8, r3
+    ; check if solid
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    add r2, r3 ; add column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_down_bonk
+    ; test new X alignment with tile edge, meaning only 1 test is needed
+    ; (player is 1 tile high and in this case, occupies 1 tile)
+    tstb r0
+    beq pmove_done
+    ; get next tile over
+    inc r3
+    ; check if solid
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_down_bonk
+
+    br pmove_done
+
+pmove_down_bonk:
+    ; get old player Y
+    mov @#bgY, r2
+    ; get tile border position
+    bic #^B11111111, r2
+    ; get difference from old player Y and tile border
+    sub @#bgY, r2
+    add #plsprite_H/2*-POS_PER_PX+256, r2
+    mov r2, @#scrollPX
+    clr @#playerYSpeed
+
     br pmove_done
 
 pmove_up:
+    mov r1, r3 ; get new Y tile pos
+    ash #-8, r3
+    mul #SCREEN_MAP_W, r3 ; get row pointer
+    mov r0, r2 ; get new X tile pos
+    ash #-8, r2
+    add r2, r3 ; add column
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_up_bonk
+    ; test new X alignment with tile edge, meaning only 1 test is needed
+    ; (player is 1 tile high and in this case, occupies 1 tile)
+    tstb r0
+    beq pmove_done
+    ; get next tile over
+    inc r3
+    ; check if solid
+    cmpb collisionMap(r3), #BLOCKTYPE_LAND
+    beq pmove_up_bonk
+
     br pmove_done
-pmove_down:
+
+pmove_up_bonk:
+    ; get old player Y
+    mov @#bgY, r2
+    ; get tile border position
+    bic #^B11111111, r2
+    ; get difference from old player Y and tile border
+    sub @#bgY, r2
+    add #plsprite_H/2*POS_PER_PX, r2
+    mov r2, @#scrollPX
+    clr @#playerYSpeed
 
 pmove_done:
 
@@ -1074,11 +1142,12 @@ clearCollisionMap:
     mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
     clr @#playerXSpeed
     clr @#playerYSpeed
+    mov #plspriteR, @#plsprite
 
     mov #4*POS_PER_PX, bgY ; start centered
     mov #screen0, @#LCDINA
     mov #screen1, @#scrptr
-    mov #screen0, @#scrptr ; for when flipping disabled
+    ;mov #screen0, @#scrptr ; for when flipping disabled
 
 loop:
     movb #PLAYER_GRAV, @#playerXDir
@@ -1094,10 +1163,12 @@ loop:
     br latMoveDone
 moveRight:
     movb #-PLAYER_ACCEL, @#playerYDir
+    mov #plspriteR, @#plsprite
     clr @#inkey
     br latMoveDone
 moveLeft:
     movb #PLAYER_ACCEL, @#playerYDir
+    mov #plspriteL, @#plsprite
     clr @#inkey
     br latMoveDone
 thrust:
@@ -1107,7 +1178,7 @@ latMoveDone:
 
     jsr pc, updatePlayerMovement
 
-    mov #plsprite, @#bcopy_data
+    mov @#plsprite, @#bcopy_data
     mov #plsprite_H, @#bcopy_h
     mov @#playerX, r0
     ; convert X position to pixel position
@@ -1120,7 +1191,7 @@ latMoveDone:
     mov #SCREEN_HEIGHT-plsprite_H/2, @#bcopy_y
     jsr pc, drawbitmap
 
-    br noflipscr1 ; disable flipping
+    ;br noflipscr1 ; disable flipping
     cmp @#scrptr, #screen0
     beq flipscr1
     mov #screen1, @#LCDINA
@@ -1136,13 +1207,21 @@ noflipscr1:
     br loop
 
 STRIP_W = 8
-plsprite:
+plspriteR:
     .byte ^B01100000
     .byte ^B10011111
     .byte ^B10011100
     .byte ^B11111100
     .byte ^B11111111
     .byte ^B01111000
+
+plspriteL:
+    .byte ^B01111000
+    .byte ^B11111111
+    .byte ^B11111100
+    .byte ^B10011100
+    .byte ^B10011111
+    .byte ^B01100000
 plsprite_H = 6
 
 TILE_H = 8
@@ -1302,6 +1381,8 @@ playerYDir:
 playerXSpeed:
     .word 0
 playerYSpeed:
+    .word 0
+plsprite:
     .word 0
 
 endOfRAM: ; must not go beyond 16KB
