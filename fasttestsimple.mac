@@ -38,6 +38,8 @@ scratch: ; this can be used as memory after things are loaded
     GETCH = ^O131120
     PUTCH = ^O116542
 
+    INITIAL_SCREENMEM = 12288
+
     BOOTBLOCK_SIZE = 510 ; you'd think it'd be 512 but I guess not?
 
     SCREEN_WIDTH_B = 30
@@ -61,16 +63,39 @@ scratch: ; this can be used as memory after things are loaded
 ; ########################################
 
 loader:
-	mov #endOfProgram, r4
-	mov	#endOfRAM-endOfProgram, r3
-loaderClearScreenLoop:
-	clr	(r4)+
-	sob	r3, loaderClearScreenLoop
-
     mov #16384, sp
-
-	mov	#screen0, @#LCDINA
 	mov #^B1000100011000110, @#LCDINB	;26Hz
+
+    mov #INITIAL_SCREENMEM+SCREEN_SIZE_B, r3
+    mov #SCREEN_HEIGHT/4, r4
+clear0:
+    mov #SCREEN_WIDTH_W, r5
+clear0a:
+    bis #^B0101010101010101, -(r3)
+    sob r5, clear0a
+    sub #SCREEN_WIDTH_B, r3
+    sob r4, clear0
+
+    mov #4096, r3
+clear_delay0:
+    sob r3, clear_delay0
+
+    mov #INITIAL_SCREENMEM+SCREEN_SIZE_B-SCREEN_WIDTH_B, r3
+    mov #SCREEN_HEIGHT/4, r4
+clear1:
+    mov #SCREEN_WIDTH_W, r5
+clear1a:
+    bis #^B1010101010101010, -(r3)
+    sob r5, clear1a
+    sub #SCREEN_WIDTH_B, r3
+    sob r4, clear1
+
+    mov #4096, r3
+clear_delay1:
+    sob r3, clear_delay1
+
+    br clear_cont
+clear_return:
 
 	;Loader copyed from Game of Life app of Piotr Piatek
     ;Which I copied again from the T-Rex game
@@ -105,7 +130,35 @@ nxtb:
 	mov	#start, -(sp)
 	rti
 
-    .blkb 14 ; push the keyboard interrupt vector as far to the end as possible
+    .= 200 ; Location of KBCU IV
+    .word	keyIntHandle, 0000
+
+clear_cont:
+    mov #INITIAL_SCREENMEM+SCREEN_SIZE_B, r3
+    mov #SCREEN_HEIGHT/4, r4
+clear2:
+    mov #SCREEN_WIDTH_W, r5
+clear2a:
+    bis #^B1010101010101010, -(r3)
+    sob r5, clear2a
+    sub #SCREEN_WIDTH_B, r3
+    sob r4, clear2
+
+    mov #4096, r3
+clear_delay2:
+    sob r3, clear_delay2
+
+    mov #INITIAL_SCREENMEM+SCREEN_SIZE_B-SCREEN_WIDTH_B, r3
+    mov #SCREEN_HEIGHT/4, r4
+clear3:
+    mov #SCREEN_WIDTH_W, r5
+clear3a:
+    bis #^B0101010101010101, -(r3)
+    sob r5, clear3a
+    sub #SCREEN_WIDTH_B, r3
+    sob r4, clear3
+
+    br clear_return
 
 ; ########################################
 ; ##### Utilities                    #####
@@ -131,9 +184,6 @@ waitGetKey:
     mov (sp)+, r1
     mov (sp)+, r0
     rti
-
-    .= 200 ; Location of KBCU IV
-    .word	keyIntHandle, 0000
 
 getRandom:
     ; put random value in r1 (low bits for div go in r1)
@@ -1238,6 +1288,13 @@ pmove_not_water_br:
 
 start:
     mov #12345, @#randomSeed
+
+    mov #SCREEN_SIZE_B+2, r0
+clearScreens:
+    mov #-1, screen0-2(r0)
+    mov #-1, screen1-2(r0)
+    dec r0
+    sob r0, clearScreens
 
 ; clear everything
     mov #screenMapEnd-screenMap+2, r0
