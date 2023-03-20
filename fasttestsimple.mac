@@ -203,6 +203,47 @@ getRandom:
     mov (sp)+, r0
     rts pc
 
+drawNumber:
+    dnum_val = arg
+    dnum_x = bcopy_x
+    dnum_y = bcopy_y
+
+    mov @#dnum_val, r1
+dnum_loop:
+    ; save value
+    mov r1, -(sp)
+    ; get one's place (r1) and remaining (r0)
+    clr r0
+    div #10, r0
+    mov r0, (sp)
+
+    ; get relative pointer
+    movb spr_num_ptrs(r1), r2
+    ; turn it in to an absolute address
+    add #spr_num_0, r2
+    mov r2, @#bcopy_data
+    movb spr_num_widths(r1), @#bcopy_h
+    ; save current position and this height
+    mov @#scrptr, -(sp)
+    mov @#bcopy_h, -(sp)
+    mov @#bcopy_y, -(sp)
+    mov #screen0, @#scrptr
+    jsr pc, drawbitmap
+    mov #screen1, @#scrptr
+    mov (sp), @#bcopy_y
+    jsr pc, drawbitmap
+    ; restore position and advance height
+    mov (sp)+, @#bcopy_y
+    add (sp)+, @#bcopy_y
+    mov (sp)+, @#scrptr
+    inc @#bcopy_y
+ 
+    ; restore value
+    mov (sp)+, r1
+    bne dnum_loop
+
+    rts pc
+
 ; ########################################
 ; ##### Bitmap Drawing               #####
 ; ########################################
@@ -1206,11 +1247,7 @@ pmove_done:
     movb collisionMap(r3), r4
     cmp r4, #BLOCKTYPE_COIN
     bne pmove_not_coin_tl
-    movb #BLOCKTYPE_AIR, collisionMap(r3)
-    asl r3 ; bytes to words
-    mov #t_air, screenMap(r3)
-    asr r3
-    inc @#coins
+    jsr pc, addCoin
     br pmove_not_water_tl
 pmove_not_coin_tl:
     cmp r4, #BLOCKTYPE_WATER
@@ -1221,11 +1258,7 @@ pmove_not_water_tl:
     movb collisionMap(r3), r4
     cmp r4, #BLOCKTYPE_COIN
     bne pmove_not_coin_tr
-    movb #BLOCKTYPE_AIR, collisionMap(r3)
-    asl r3 ; bytes to words
-    mov #t_air, screenMap(r3)
-    asr r3
-    inc @#coins
+    jsr pc, addCoin
     br pmove_not_water_tr
 pmove_not_coin_tl:
 pmove_not_coin_tr:
@@ -1250,11 +1283,7 @@ pmove_coin_check_y_nowrap:
     movb collisionMap(r3), r4
     cmp r4, #BLOCKTYPE_COIN
     bne pmove_not_coin_bl
-    movb #BLOCKTYPE_AIR, collisionMap(r3)
-    asl r3 ; bytes to words
-    mov #t_air, screenMap(r3)
-    asr r3
-    inc @#coins
+    jsr pc, addCoin
     br pmove_not_water_bl
 pmove_not_coin_bl:
     cmp r4, #BLOCKTYPE_WATER
@@ -1265,11 +1294,7 @@ pmove_not_water_bl:
     movb collisionMap(r3), r4
     cmp r4, #BLOCKTYPE_COIN
     bne pmove_not_coin_br
-    movb #BLOCKTYPE_AIR, collisionMap(r3)
-    asl r3 ; bytes to words
-    mov #t_air, screenMap(r3)
-    asr r3
-    inc @#coins
+    jsr pc, addCoin
     br pmove_not_water_br
 pmove_not_coin_br:
     cmp r4, #BLOCKTYPE_WATER
@@ -1282,6 +1307,101 @@ pmove_not_water_br:
 
     rts pc
 
+addCoin:
+    movb #BLOCKTYPE_AIR, collisionMap(r3)
+    asl r3 ; bytes to words
+    mov #t_air, screenMap(r3)
+    asr r3
+    inc @#coins
+
+
+    ; save registers and variables which are important and would be overwritten
+    mov @#scrollPX, -(sp)
+    mov r0, -(sp)
+    mov r1, -(sp)
+    mov r3, -(sp)
+
+    mov #SCREEN_HEIGHT/2, r0
+    mov #SCREEN_SIZE_B-2, r1
+counterClearLoop:
+    mov #^B1111111111111111, screen0(r1)
+    mov #^B1111111111111111, screen1(r1)
+    sub #SCREEN_WIDTH_B, r1
+    sob r0, counterClearLoop
+
+    mov #TIME_PER_COIN, r0
+    jsr pc, changeTime
+
+    mov @#coins, @#dnum_val
+    mov #8*14, @#dnum_x
+    mov #1, dnum_y
+    jsr pc, drawNumber
+
+    ; restore values
+    mov (sp)+, r3
+    mov (sp)+, r1
+    mov (sp)+, r0
+    mov (sp)+, @#scrollPX
+
+    rts pc
+
+    ; 256 values per timer pixel
+    MAX_TIME = SCREEN_HEIGHT*256
+    TIME_PER_FRAME = 15
+    TIME_PER_COIN = 200
+changeTime:
+    ; copy time in to r1 and r2, subtract time taken and put it back
+    ; r2 is now the new value and r1 is the old value
+    mov @#time, r1
+    mov r1, r2
+    add r0, r2
+    bge cTime_no_end
+    clr r2
+    mov #GAME_MODE_ENDED, @#gameMode
+cTime_no_end:
+
+    cmp r2, #MAX_TIME
+    blt cTime_no_max
+    mov #MAX_TIME, r2
+cTime_no_max:
+
+    mov r2, @#time
+
+    ; get the difference in units of 256
+    ash #-8, r1
+    ash #-8, r2
+
+    cmp r2, r1
+    blt cTime_take
+    bgt cTime_give
+    br cTime_done
+cTime_give:
+    mov r2, r1
+cTime_take:
+
+    neg r1
+    add #SCREEN_HEIGHT, r1
+
+    cmp r1, #SCREEN_HEIGHT/2
+    blt cTime_top
+
+; bottom screen
+    sub #SCREEN_HEIGHT/2, r1
+    mul #SCREEN_WIDTH_B, r1
+    inc r1 ; get high byte
+    comb screen0(r1)
+    comb screen1(r1)
+
+    br cTime_done
+
+cTime_top:
+    mul #SCREEN_WIDTH_B, r1
+    comb screen0(r1)
+    comb screen1(r1)
+
+cTime_done:
+    rts pc
+
 ; ########################################
 ; ##### Start                        #####
 ; ########################################
@@ -1289,12 +1409,56 @@ pmove_not_water_br:
 start:
     mov #12345, @#randomSeed
 
+    ; reset state
+    mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
+    clr @#playerXSpeed
+    clr @#playerYSpeed
+    mov #plspriteR, @#plsprite
+    clr @#coins
+    clr @#inWater
+    mov #MAX_TIME, @#time
+    mov #GAME_MODE_RUNNING, @#gameMode
+
     mov #SCREEN_SIZE_B+2, r0
 clearScreens:
     mov #-1, screen0-2(r0)
     mov #-1, screen1-2(r0)
     dec r0
     sob r0, clearScreens
+
+    mov #SCREEN_SIZE_B-SCREEN_WIDTH_B, r0
+draw_lines:
+    mov #^B1111111011111110, screen0(r0)
+    mov #^B0111111101111111, screen0+26(r0)
+    mov #^B1111111011111110, screen1(r0)
+    mov #^B0111111101111111, screen1+26(r0)
+    sub #SCREEN_WIDTH_B*2, r0
+    bpl draw_lines
+
+    mov #screen0, @#scrptr
+    mov #spr_time, @#bcopy_data
+    mov #spr_time_H, @#bcopy_h
+    clr @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+    mov #screen1, @#scrptr
+    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+
+    mov #screen0, @#scrptr
+    mov #spr_coins, @#bcopy_data
+    mov #spr_coins_H, @#bcopy_h
+    mov #8*13, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+    mov #screen1, @#scrptr
+    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+
+    mov @#coins, @#dnum_val
+    mov #8*14, @#dnum_x
+    mov #1, dnum_y
+    jsr pc, drawNumber
 
 ; clear everything
     mov #screenMapEnd-screenMap+2, r0
@@ -1329,22 +1493,17 @@ clearCollisionMap:
     mov #PLAYER_STARTY+1, @#gen_y
     jsr pc, genDown
 
-    mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
-    clr @#playerXSpeed
-    clr @#playerYSpeed
-    mov #plspriteR, @#plsprite
-    clr @#coins
-    clr @#inWater
-
     mov #4*POS_PER_PX, bgY ; start centered
     mov #screen0, @#LCDINA
-    mov #screen1, @#scrptr
     ;mov #screen0, @#scrptr ; for when flipping disabled
 
 loop:
+    ;mov @#inkey, @#screen0
+    cmp @#gameMode, #GAME_MODE_RUNNING
+    bne not_running
+    
     movb #PLAYER_GRAV, @#playerXDir
     clrb @#playerYDir
-    ;mov @#inkey, @#screen0
 
     cmp @#inkey, #KEY_UP
     beq moveRight
@@ -1369,6 +1528,18 @@ thrust:
 latMoveDone:
 
     jsr pc, updatePlayerMovement
+
+    mov #-TIME_PER_FRAME, r0
+    jsr pc, changeTime
+
+    br running_cont
+not_running:
+    ; just call scrollScreen since it's a pretty lightweight method that ends up
+    ; drawing the screen anyway
+    clr @#scrollPX
+    jsr pc, scrollScreen
+
+running_cont:
 
     mov @#plsprite, @#bcopy_data
     mov #plsprite_H, @#bcopy_h
@@ -1505,6 +1676,130 @@ tile_ptrs:
     .word t_land
     .word t_water
 
+spr_time:
+    .byte ^B01000100
+    .byte ^B01010100
+    .byte ^B01010100
+    .byte ^B01111100
+    .byte ^B00000000
+    .byte ^B01111100
+    .byte ^B00100000
+    .byte ^B00010000
+    .byte ^B00100000
+    .byte ^B01111100
+    .byte ^B00000000
+    .byte ^B01111100
+    .byte ^B00000000
+    .byte ^B01000000
+    .byte ^B01111100
+    .byte ^B01000000
+spr_time_H = 16
+
+spr_coins:
+    .byte ^B00101110
+    .byte ^B00101010
+    .byte ^B00101010
+    .byte ^B00111010
+    .byte ^B00000000
+    .byte ^B00111110
+    .byte ^B00001000
+    .byte ^B00010000
+    .byte ^B00111110
+    .byte ^B00000000
+    .byte ^B00111110
+    .byte ^B00000000
+    .byte ^B00111110
+    .byte ^B00100010
+    .byte ^B00100010
+    .byte ^B00111110
+    .byte ^B00000000
+    .byte ^B00100010
+    .byte ^B00100010
+    .byte ^B00100010
+    .byte ^B00111110
+spr_coins_H = 21
+
+spr_num_0:
+    .byte ^B01111100
+    .byte ^B10010010
+    .byte ^B10100010
+    .byte ^B01111100
+
+spr_num_1:
+    .byte ^B11111110
+
+spr_num_2:
+    .byte ^B01100010
+    .byte ^B10010010
+    .byte ^B10001010
+    .byte ^B01000110
+
+spr_num_3:
+    .byte ^B01101100
+    .byte ^B10010010
+    .byte ^B10010010
+    .byte ^B01000100
+
+spr_num_4:
+    .byte ^B11111110
+    .byte ^B00001000
+    .byte ^B01101000
+    .byte ^B00011000
+
+spr_num_5:
+    .byte ^B10001100
+    .byte ^B10010010
+    .byte ^B10010010
+    .byte ^B11110100
+
+spr_num_6:
+    .byte ^B01001100
+    .byte ^B10010010
+    .byte ^B10010010
+    .byte ^B01111100
+
+spr_num_7:
+    .byte ^B11110000
+    .byte ^B10001110
+    .byte ^B10000000
+    .byte ^B10000000
+
+spr_num_8:
+    .byte ^B01101100
+    .byte ^B10010010
+    .byte ^B10010010
+    .byte ^B01101100
+
+spr_num_9:
+    .byte ^B01111100
+    .byte ^B10010010
+    .byte ^B10010010
+    .byte ^B01100100
+
+spr_num_ptrs:
+    .byte 0
+    .byte spr_num_1-spr_num_0
+    .byte spr_num_2-spr_num_0
+    .byte spr_num_3-spr_num_0
+    .byte spr_num_4-spr_num_0
+    .byte spr_num_5-spr_num_0
+    .byte spr_num_6-spr_num_0
+    .byte spr_num_7-spr_num_0
+    .byte spr_num_8-spr_num_0
+    .byte spr_num_9-spr_num_0
+
+spr_num_widths:
+    .byte spr_num_1-spr_num_0
+    .byte spr_num_2-spr_num_1
+    .byte spr_num_3-spr_num_2
+    .byte spr_num_4-spr_num_3
+    .byte spr_num_5-spr_num_4
+    .byte spr_num_6-spr_num_5
+    .byte spr_num_7-spr_num_6
+    .byte spr_num_8-spr_num_7
+    .byte spr_num_9-spr_num_8
+    .byte spr_num_ptrs-spr_num_9
+
 PMOD_DISALLOW = 0
 PMOD_ADDONE = 1
 PMOD_DOUBLE = 2
@@ -1621,6 +1916,12 @@ coins:
     .word 0
 inWater:
     .word 0
+time:
+    .word 0
+GAME_MODE_RUNNING = 1
+GAME_MODE_ENDED = 0
+gameMode:
+    .byte 0
 
 endOfRAM: ; must not go beyond 16KB
 
