@@ -57,6 +57,9 @@ scratch: ; this can be used as memory after things are loaded
     KEY_UP = 59
     KEY_DOWN = 63
     KEY_LEFT = 91
+    KEY_W = 75
+    KEY_X = 87
+    KEY_7 = 71
 
 ; ########################################
 ; ##### Loader                       #####
@@ -1417,7 +1420,15 @@ start:
     clr @#coins
     clr @#inWater
     mov #MAX_TIME, @#time
-    mov #GAME_MODE_RUNNING, @#gameMode
+    movb #GAME_MODE_RUNNING, @#gameMode
+    ; emulator controls
+    ;movb #KEY_UP, @#rightButton
+    ;movb #KEY_DOWN, @#leftButton
+    ;movb #KEY_LEFT, @#jumpButton
+    ; console controls
+    movb #KEY_W, @#rightButton
+    movb #KEY_X, @#leftButton
+    movb #KEY_7, @#jumpButton
 
     mov #SCREEN_SIZE_B+2, r0
 clearScreens:
@@ -1499,17 +1510,17 @@ clearCollisionMap:
 
 loop:
     ;mov @#inkey, @#screen0
-    cmp @#gameMode, #GAME_MODE_RUNNING
+    cmpb @#gameMode, #GAME_MODE_RUNNING
     bne not_running
     
     movb #PLAYER_GRAV, @#playerXDir
     clrb @#playerYDir
 
-    cmp @#inkey, #KEY_UP
+    cmpb @#inkey, @#rightButton
     beq moveRight
-    cmp @#inkey, #KEY_DOWN
+    cmpb @#inkey, @#leftButton
     beq moveLeft
-    cmp @#inkey, #KEY_LEFT
+    cmpb @#inkey, @#jumpButton
     beq thrust
     br latMoveDone
 moveRight:
@@ -1921,6 +1932,12 @@ time:
 GAME_MODE_RUNNING = 1
 GAME_MODE_ENDED = 0
 gameMode:
+    .byte 0
+rightButton:
+    .byte 0
+leftButton:
+    .byte 0
+jumpButton:
     .byte 0
 
 endOfRAM: ; must not go beyond 16KB
