@@ -18,7 +18,7 @@ if width != 64 and height != 96:
     raise ValueError("Width must be 64 and height must be 96.")
 
 lineItem = ITEMS_PER_LINE
-print("\t.word ", end='')
+print("    .word ", end='')
 
 for y in range(width//2):
     for x in range(0, height, 8):

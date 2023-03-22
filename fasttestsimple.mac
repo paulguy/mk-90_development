@@ -1881,7 +1881,7 @@ probability_ptrs:
     .byte probabilities_water-probabilities_start
 
 gfx_title:
-	.word ^D65535, ^D61951, ^D34784, ^D38783, ^D56412, ^D50372
+    .word ^D65535, ^D61951, ^D34784, ^D38783, ^D56412, ^D50372
     .word ^D256, ^D54016, ^D53521, ^D40349, ^D33791, ^D65535
     .word ^D65535, ^D63999, ^D36833, ^D34095, ^D56540, ^D50372
     .word ^D0, ^D52992, ^D53521, ^D40349, ^D49151, ^D48127
