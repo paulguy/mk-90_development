@@ -8,6 +8,7 @@
 
 PLAYER_STARTX = SCREEN_MAP_W-5
 PLAYER_STARTY = 4 ; from the right
+DELAY_CYCLES = 4096
 
 	.= 0		; Beginning of cartridge
     nop ; seems to be needed
@@ -79,9 +80,7 @@ clear0a:
     sub #SCREEN_WIDTH_B, r3
     sob r4, clear0
 
-    mov #4096, r3
-clear_delay0:
-    sob r3, clear_delay0
+    jsr pc, delay
 
     mov #INITIAL_SCREENMEM+SCREEN_SIZE_B-SCREEN_WIDTH_B, r3
     mov #SCREEN_HEIGHT/4, r4
@@ -93,9 +92,7 @@ clear1a:
     sub #SCREEN_WIDTH_B, r3
     sob r4, clear1
 
-    mov #4096, r3
-clear_delay1:
-    sob r3, clear_delay1
+    jsr pc, delay
 
     br clear_cont
 clear_return:
@@ -133,6 +130,13 @@ nxtb:
 	mov	#start, -(sp)
 	rti
 
+delay:
+    mov #DELAY_CYCLES, r3
+delay_loop:
+    sob r3, delay_loop
+
+    rts pc
+
     .= 200 ; Location of KBCU IV
     .word	keyIntHandle, 0000
 
@@ -147,9 +151,7 @@ clear2a:
     sub #SCREEN_WIDTH_B, r3
     sob r4, clear2
 
-    mov #4096, r3
-clear_delay2:
-    sob r3, clear_delay2
+    jsr pc, delay
 
     mov #INITIAL_SCREENMEM+SCREEN_SIZE_B-SCREEN_WIDTH_B, r3
     mov #SCREEN_HEIGHT/4, r4
@@ -1405,6 +1407,26 @@ cTime_top:
 cTime_done:
     rts pc
 
+copy_gfx:
+    ; r0 - src pointer
+    ; r1 - dst pointer
+    ; r2 - columns
+    ; r3 - stride
+    mov r1, -(sp)
+    mov #SCREEN_HEIGHT/2, r4
+cGfx_loop:
+    mov r2, r5
+cGfx_line:
+    mov (r0)+, (r1)+
+    sob r5, cGfx_line
+    add r3, (sp)
+    mov (sp), r1
+    sob r4, cGfx_loop
+
+    tst (sp)+
+
+    rts pc
+
 ; ########################################
 ; ##### Start                        #####
 ; ########################################
@@ -1507,6 +1529,16 @@ clearCollisionMap:
     mov #4*POS_PER_PX, bgY ; start centered
     mov #screen0, @#LCDINA
     ;mov #screen0, @#scrptr ; for when flipping disabled
+
+    mov #gfx_title, r0
+    mov #screen0+2, r1
+    mov #12, r2
+    mov #SCREEN_WIDTH_B, r3
+    jsr pc, copy_gfx
+
+titleLoop:
+    cmpb @#inkey, @#jumpButton
+    bne titleLoop
 
 loop:
     ;mov @#inkey, @#screen0
@@ -1847,6 +1879,72 @@ probability_ptrs:
     .byte probabilities_air-probabilities_start
     .byte probabilities_land-probabilities_start
     .byte probabilities_water-probabilities_start
+
+gfx_title:
+	.word ^D65535, ^D61951, ^D34784, ^D38783, ^D56412, ^D50372
+    .word ^D256, ^D54016, ^D53521, ^D40349, ^D33791, ^D65535
+    .word ^D65535, ^D63999, ^D36833, ^D34095, ^D56540, ^D50372
+    .word ^D0, ^D52992, ^D53521, ^D40349, ^D49151, ^D48127
+    .word ^D65535, ^D65535, ^D4070, ^D276, ^D23772, ^D50372
+    .word ^D256, ^D54020, ^D53521, ^D40349, ^D49151, ^D33719
+    .word ^D65535, ^D65535, ^D1760, ^D255, ^D23772, ^D50372
+    .word ^D0, ^D56576, ^D53521, ^D40349, ^D65535, ^D48043
+    .word ^D65535, ^D65535, ^D240, ^D7291, ^D56540, ^D50372
+    .word ^D33, ^D32767, ^D53713, ^D40349, ^D47103, ^D65451
+    .word ^D65535, ^D65535, ^D33011, ^D8094, ^D56540, ^D50372
+    .word ^D97, ^D193, ^D4561, ^D40349, ^D44031, ^D49115
+    .word ^D65535, ^D65535, ^D57584, ^D16207, ^D56540, ^D50372
+    .word ^D253, ^D7421, ^D4561, ^D40349, ^D44031, ^D45055
+    .word ^D65535, ^D65535, ^D55520, ^D12155, ^D56540, ^D50373
+    .word ^D253, ^D2299, ^D4561, ^D40349, ^D56319, ^D44959
+    .word ^D16383, ^D65535, ^D50917, ^D2975, ^D56412, ^D50372
+    .word ^D252, ^D2299, ^D4561, ^D40349, ^D65535, ^D33763
+    .word ^D49663, ^D65535, ^D57825, ^D33653, ^D56540, ^D50372
+    .word ^D97, ^D247, ^D4561, ^D40349, ^D511, ^D65439
+    .word ^D65279, ^D65535, ^D63970, ^D59143, ^D56540, ^D50372
+    .word ^D288, ^D65527, ^D53713, ^D40349, ^D8703, ^D48127
+    .word ^D65535, ^D32767, ^D65506, ^D65470, ^D56540, ^D50372
+    .word ^D256, ^D49535, ^D53713, ^D40349, ^D20991, ^D43963
+    .word ^D32767, ^D49151, ^D65505, ^D32713, ^D56540, ^D50372
+    .word ^D256, ^D63232, ^D53521, ^D40349, ^D20991, ^D43947
+    .word ^D63231, ^D57343, ^D65506, ^D48939, ^D56412, ^D50372
+    .word ^D0, ^D63232, ^D53521, ^D40349, ^D32255, ^D33707
+    .word ^D65535, ^D49151, ^D65520, ^D65407, ^D56540, ^D50372
+    .word ^D256, ^D63260, ^D53521, ^D40349, ^D447, ^D65411
+    .word ^D65535, ^D32767, ^D65520, ^D61312, ^D56412, ^D50372
+    .word ^D0, ^D63256, ^D53521, ^D40349, ^D32191, ^D51199
+    .word ^D57087, ^D65535, ^D65528, ^D63295, ^D56540, ^D50372
+    .word ^D0, ^D32540, ^D53521, ^D40349, ^D8579, ^D48059
+    .word ^D65020, ^D65311, ^D65535, ^D65535, ^D56540, ^D50372
+    .word ^D32, ^D0, ^D4369, ^D40349, ^D4543, ^D48087
+    .word ^D62960, ^D65287, ^D65535, ^D65535, ^D56540, ^D50372
+    .word ^D113, ^D4351, ^D4561, ^D40349, ^D8639, ^D33775
+    .word ^D64993, ^D65475, ^D65535, ^D65023, ^D56540, ^D50372
+    .word ^D249, ^D7389, ^D4561, ^D40349, ^D32255, ^D65411
+    .word ^D65223, ^D65521, ^D65535, ^D65535, ^D56540, ^D50373
+    .word ^D253, ^D7381, ^D4561, ^D40349, ^D467, ^D48127
+    .word ^D63439, ^D32761, ^D65535, ^D65535, ^D23772, ^D50372
+    .word ^D28784, ^D213, ^D4561, ^D40349, ^D32175, ^D44031
+    .word ^D49039, ^D49144, ^D65535, ^D65535, ^D56540, ^D50372
+    .word ^D29041, ^D65493, ^D53713, ^D40349, ^D1455, ^D44031
+    .word ^D65432, ^D57100, ^D65535, ^D65535, ^D56540, ^D50372
+    .word ^D29040, ^D56811, ^D53713, ^D40349, ^D1411, ^D33723
+    .word ^D65168, ^D57092, ^D65535, ^D65535, ^D56540, ^D50372
+    .word ^D29040, ^D60287, ^D53713, ^D40349, ^D31231, ^D65451
+    .word ^D65432, ^D61196, ^D65487, ^D65535, ^D56540, ^D50372
+    .word ^D28784, ^D63232, ^D53521, ^D40349, ^D451, ^D427
+    .word ^D46991, ^D57336, ^D65479, ^D65535, ^D56540, ^D50628
+    .word ^D64768, ^D60180, ^D53521, ^D40349, ^D31151, ^D11651
+    .word ^D65487, ^D49145, ^D65519, ^D65535, ^D56540, ^D50372
+    .word ^D63488, ^D56600, ^D53521, ^D40349, ^D17839, ^D20991
+    .word ^D65479, ^D32753, ^D65534, ^D65407, ^D56540, ^D50372
+    .word ^D28672, ^D32532, ^D53521, ^D40349, ^D1475, ^D20867
+    .word ^D65249, ^D65475, ^D65529, ^D65471, ^D56540, ^D50372
+    .word ^D8192, ^D0, ^D4369, ^D40349, ^D2559, ^D32239
+    .word ^D61168, ^D65287, ^D65507, ^D65503, ^D56540, ^D50372
+    .word ^D1, ^D255, ^D4561, ^D40349, ^D447, ^D479
+    .word ^D65532, ^D32541, ^D65479, ^D65503, ^D56540, ^D50372
+    .word ^D1, ^D221, ^D4561, ^D40349, ^D65471, ^D65411
 
 .EVEN
 
