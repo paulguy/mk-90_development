@@ -40,9 +40,11 @@ for y in range(width//2):
             pixels[((x+2)*width-1-(width//2))-y] << 14 | \
             pixels[((x+1)*width-1-(width//2))-y] << 15
 
-        print("^D{}, ".format(gfxdata), end='')
+        print("^D{}".format(gfxdata), end='')
         lineItem -= 1
         if lineItem == 0:
             lineItem = ITEMS_PER_LINE
             print()
-            print("\t.word ", end='')
+            print("    .word ", end='')
+        else:
+            print(", ", end='')
