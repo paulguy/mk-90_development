@@ -213,6 +213,8 @@ drawNumber:
     dnum_x = bcopy_x
     dnum_y = bcopy_y
 
+    mov @#scrptr, -(sp)
+
     mov @#dnum_val, r1
 dnum_loop:
     ; save value
@@ -227,9 +229,9 @@ dnum_loop:
     ; turn it in to an absolute address
     add #spr_num_0, r2
     mov r2, @#bcopy_data
-    movb spr_num_widths(r1), @#bcopy_h
+    movb spr_num_widths(r1), r2
+    mov r2, @#bcopy_h
     ; save current position and this height
-    mov @#scrptr, -(sp)
     mov @#bcopy_h, -(sp)
     mov @#bcopy_y, -(sp)
     mov #screen0, @#scrptr
@@ -240,12 +242,13 @@ dnum_loop:
     ; restore position and advance height
     mov (sp)+, @#bcopy_y
     add (sp)+, @#bcopy_y
-    mov (sp)+, @#scrptr
     inc @#bcopy_y
  
     ; restore value
     mov (sp)+, r1
     bne dnum_loop
+
+    mov (sp)+, @#scrptr
 
     rts pc
 
@@ -1319,7 +1322,6 @@ addCoin:
     asr r3
     inc @#coins
 
-
     ; save registers and variables which are important and would be overwritten
     mov @#scrollPX, -(sp)
     mov r0, -(sp)
@@ -1339,7 +1341,7 @@ counterClearLoop:
 
     mov @#coins, @#dnum_val
     mov #8*14, @#dnum_x
-    mov #1, dnum_y
+    mov #1, @#dnum_y
     jsr pc, drawNumber
 
     ; restore values
@@ -1432,22 +1434,132 @@ cGfx_line:
 
     rts pc
 
+fOut_clear:
+    mov #SCREEN_HEIGHT/4, r3
+fOut_loop:
+    mov #12, r4
+fOut_loop_a:
+    bis r2, -(r0)
+    bis r2, -(r1)
+    sob r4, fOut_loop_a
+    sub #SCREEN_WIDTH_B*2-24, r0
+    sub #SCREEN_WIDTH_B*2-24, r1
+    sob r3, fOut_loop
+
+    rts pc
+
+fade_out:
+    mov #screen0+SCREEN_SIZE_B-4, r0
+    mov #screen1+SCREEN_SIZE_B-4, r1
+    mov #^B0101010101010101, r2
+    jsr pc, fOut_clear
+
+    jsr pc, delay
+
+    mov #screen0+SCREEN_SIZE_B-SCREEN_WIDTH_B-4, r0
+    mov #screen1+SCREEN_SIZE_B-SCREEN_WIDTH_B-4, r1
+    mov #^B1010101010101010, r2
+    jsr pc, fOut_clear
+
+    jsr pc, delay
+
+    mov #screen0+SCREEN_SIZE_B-4, r0
+    mov #screen1+SCREEN_SIZE_B-4, r1
+    mov #^B1010101010101010, r2
+    jsr pc, fOut_clear
+
+    jsr pc, delay
+
+    mov #screen0+SCREEN_SIZE_B-SCREEN_WIDTH_B-4, r0
+    mov #screen1+SCREEN_SIZE_B-SCREEN_WIDTH_B-4, r1
+    mov #^B0101010101010101, r2
+    jsr pc, fOut_clear
+
+    jsr pc, delay
+
+    rts pc
+
+fGfx_copy:
+    mov #SCREEN_HEIGHT/4, -(sp)
+fGfx_loop:
+    mov r0, -(sp)
+    mov r1, -(sp)
+    mov @#FADE_SRC_STRIDE, r4
+    asr r4
+fGfx_loop_a:
+    mov -(r1), r3
+    bic r2, r3
+    mov -(r0), r5
+    com r2
+    bic r2, r5
+    com r2
+    bis r5, r3
+    mov r3, (r1)
+    sob r4, fGfx_loop_a
+    mov (sp)+, r1
+    mov (sp)+, r0
+    mov @#FADE_SRC_STRIDE, r4
+    asl r4 ; skip 2 lines
+    sub r4, r0
+    mov @#FADE_DST_STRIDE, r4
+    asl r4
+    sub r4, r1
+    dec (sp)
+    bpl fGfx_loop
+
+    tst (sp)+
+
+    rts pc
+
+fade_gfx:
+    FADE_SRC = arg
+    FADE_DST = arg+2
+    FADE_SRC_STRIDE = arg+4
+    FADE_DST_STRIDE = arg+6
+
+    mov @#FADE_SRC, r0
+    mov @#FADE_DST, r1
+    mov #^B0101010101010101, r2
+    jsr pc, fGfx_copy
+
+    jsr pc, delay
+
+    mov @#FADE_SRC_STRIDE, r0 ; get stride
+    neg r0 ; get 1 line up from end
+    add @#FADE_SRC, r0
+    mov @#FADE_DST_STRIDE, r1
+    neg r1
+    add @#FADE_DST, r1
+    mov #^B1010101010101010, r2
+    jsr pc, fGfx_copy
+
+    jsr pc, delay
+
+    mov @#FADE_SRC, r0
+    mov @#FADE_DST, r1
+    mov #^B1010101010101010, r2
+    jsr pc, fGfx_copy
+
+    jsr pc, delay
+
+    mov @#FADE_SRC_STRIDE, r0 ; get stride
+    neg r0 ; get 1 line up from end
+    add @#FADE_SRC, r0
+    mov @#FADE_DST_STRIDE, r1
+    neg r1
+    add @#FADE_DST, r1
+    mov #^B0101010101010101, r2
+    jsr pc, fGfx_copy
+
+    jsr pc, delay
+
+    rts pc
+
 ; ########################################
 ; ##### Start                        #####
 ; ########################################
 
 start:
-    mov #12345, @#randomSeed
-
-    ; reset state
-    mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
-    clr @#playerXSpeed
-    clr @#playerYSpeed
-    mov #plspriteR, @#plsprite
-    clr @#coins
-    clr @#inWater
-    mov #MAX_TIME, @#time
-    movb #GAME_MODE_RUNNING, @#gameMode
     ; emulator controls
     ;movb #KEY_UP, @#rightButton
     ;movb #KEY_DOWN, @#leftButton
@@ -1457,46 +1569,18 @@ start:
     movb #KEY_X, @#leftButton
     movb #KEY_7, @#jumpButton
 
-    mov #SCREEN_SIZE_B+2, r0
-clearScreens:
-    mov #-1, screen0-2(r0)
-    mov #-1, screen1-2(r0)
-    dec r0
-    sob r0, clearScreens
+    mov #12345, @#randomSeed
 
-    mov #SCREEN_SIZE_B-SCREEN_WIDTH_B, r0
-draw_lines:
-    mov #^B1111111011111110, screen0(r0)
-    mov #^B0111111101111111, screen0+26(r0)
-    mov #^B1111111011111110, screen1(r0)
-    mov #^B0111111101111111, screen1+26(r0)
-    sub #SCREEN_WIDTH_B*2, r0
-    bpl draw_lines
-
-    mov #screen0, @#scrptr
-    mov #spr_time, @#bcopy_data
-    mov #spr_time_H, @#bcopy_h
-    clr @#bcopy_x
-    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-    mov #screen1, @#scrptr
-    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-
-    mov #screen0, @#scrptr
-    mov #spr_coins, @#bcopy_data
-    mov #spr_coins_H, @#bcopy_h
-    mov #8*13, @#bcopy_x
-    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-    mov #screen1, @#scrptr
-    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-
-    mov @#coins, @#dnum_val
-    mov #8*14, @#dnum_x
-    mov #1, dnum_y
-    jsr pc, drawNumber
+    ; reset state
+    mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
+    mov #4*POS_PER_PX, bgY ; start centered
+    clr @#playerXSpeed
+    clr @#playerYSpeed
+    mov #plspriteR, @#plsprite
+    clr @#coins
+    clr @#inWater
+    mov #MAX_TIME, @#time
+    movb #GAME_MODE_RUNNING, @#gameMode
 
 ; clear everything
     mov #screenMapEnd-screenMap+2, r0
@@ -1531,20 +1615,82 @@ clearCollisionMap:
     mov #PLAYER_STARTY+1, @#gen_y
     jsr pc, genDown
 
-    mov #4*POS_PER_PX, bgY ; start centered
-    mov #screen0, @#LCDINA
-    ;mov #screen0, @#scrptr ; for when flipping disabled
+    mov #SCREEN_SIZE_B+2, r0
+clearScreens:
+    mov #-1, screen0-2(r0)
+    mov #-1, screen1-2(r0)
+    dec r0
+    sob r0, clearScreens
+
+; draw dotted border lines for play area
+    mov #SCREEN_SIZE_B-SCREEN_WIDTH_B, r0
+draw_lines:
+    mov #^B1111111011111110, screen1(r0)
+    mov #^B0111111101111111, screen1+26(r0)
+    sub #SCREEN_WIDTH_B*2, r0
+    bpl draw_lines
+
+; draw labels
+    mov #screen1, @#scrptr ; make sure drawing happens to other screen
+
+    mov #spr_time, @#bcopy_data
+    mov #spr_time_H, @#bcopy_h
+    clr @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+
+    mov #spr_coins, @#bcopy_data
+    mov #spr_coins_H, @#bcopy_h
+    mov #8*13, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
+    jsr pc, drawbitmap
 
     mov #gfx_title_ptr, r0
-    mov #screen0+SCREEN_SIZE_B-4, r1
+    mov #screen1+SCREEN_SIZE_B-4, r1
     mov #24, r2
     mov #SCREEN_WIDTH_B, r3
     mov #12, r4
     jsr pc, copy_gfx
 
+; display screen 0
+    mov #screen0, @#LCDINA
+    ;mov #screen0, @#scrptr ; for when flipping disabled
+
+; fade screen 1 to screen 0
+    mov #screen1+SCREEN_SIZE_B, @#FADE_SRC
+    mov #screen0+SCREEN_SIZE_B, @#FADE_DST
+    mov #SCREEN_WIDTH_B, @#FADE_SRC_STRIDE
+    mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
+    jsr pc, fade_gfx
+
 titleLoop:
     cmpb @#inkey, @#jumpButton
     bne titleLoop
+    clr @#inkey
+
+    jsr pc, fade_out
+
+; draw first frame
+    clr @#scrollPX
+    jsr pc, scrollScreen
+
+    jsr pc, delay
+
+; fade screen 1 to screen 0
+    mov #screen1+SCREEN_SIZE_B, @#FADE_SRC
+    mov #screen0+SCREEN_SIZE_B, @#FADE_DST
+    mov #SCREEN_WIDTH_B, @#FADE_SRC_STRIDE
+    mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
+    jsr pc, fade_gfx
+
+; draw what will be a 0, this isn't done with everything else because the
+; drawNumber routine will draw to both pages and it won't look good to happen
+; before the fade, and i don't feel like making the routine more "robust" in
+; this way.
+    mov @#coins, @#dnum_val
+    mov #8*14, @#dnum_x
+    mov #1, @#dnum_y
+    jsr pc, drawNumber
 
 loop:
     ;mov @#inkey, @#screen0
