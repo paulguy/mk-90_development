@@ -9,6 +9,7 @@
 PLAYER_STARTX = SCREEN_MAP_W-5
 PLAYER_STARTY = 4 ; from the right
 DELAY_CYCLES = 4096
+RESTART_FRAMES = 40
 
 	.= 0		; Beginning of cartridge
     nop ; seems to be needed
@@ -184,7 +185,7 @@ keyIntHandle:
 waitGetKey:
     tstb (r0) ;@#SMPCS
     bpl waitGetKey
-    mov (r1), @#inkey
+    movb (r1), @#inkey
 
     mov (sp)+, r1
     mov (sp)+, r0
@@ -995,14 +996,14 @@ PLAYER_MAX_X = SCREEN_MAP_W*8
 updatePlayerMovement:
     tst @#inWater
     beq pmove_not_in_water
-    movb @#playerXdir, r0
+    movb @#playerXDir, r0
     mov r0, r1
     bic #^B0011111111111111, r0
     asr r1
     asr r1
     bis r0, r1
     movb r1, @#playerXDir
-    movb @#playerYdir, r0
+    movb @#playerYDir, r0
     mov r0, r1
     bic #^B0011111111111111, r0
     asr r1
@@ -1315,6 +1316,16 @@ pmove_not_water_br:
 
     rts pc
 
+clearColumn:
+    mov #SCREEN_HEIGHT/2, r0
+clearColumnLoop:
+    mov #^B1111111111111111, screen0(r1)
+    mov #^B1111111111111111, screen1(r1)
+    sub #SCREEN_WIDTH_B, r1
+    sob r0, clearColumnLoop
+
+    rts pc
+
 addCoin:
     movb #BLOCKTYPE_AIR, collisionMap(r3)
     asl r3 ; bytes to words
@@ -1328,13 +1339,8 @@ addCoin:
     mov r1, -(sp)
     mov r3, -(sp)
 
-    mov #SCREEN_HEIGHT/2, r0
     mov #SCREEN_SIZE_B-2, r1
-counterClearLoop:
-    mov #^B1111111111111111, screen0(r1)
-    mov #^B1111111111111111, screen1(r1)
-    sub #SCREEN_WIDTH_B, r1
-    sob r0, counterClearLoop
+    jsr pc, clearColumn
 
     mov #TIME_PER_COIN, r0
     jsr pc, changeTime
@@ -1364,7 +1370,8 @@ changeTime:
     add r0, r2
     bge cTime_no_end
     clr r2
-    mov #GAME_MODE_ENDED, @#gameMode
+    movb #GAME_MODE_ENDED, @#gameMode
+    mov #RESTART_FRAMES, @#counter
 cTime_no_end:
 
     cmp r2, #MAX_TIME
@@ -1569,11 +1576,69 @@ start:
     movb #KEY_X, @#leftButton
     movb #KEY_7, @#jumpButton
 
+    mov #SCREEN_SIZE_B+2, r0
+clearScreens:
+    mov #-1, screen0-2(r0)
+    mov #-1, screen1-2(r0)
+    dec r0
+    sob r0, clearScreens
+
+restart_game:
+; draw labels
+    mov #screen1, @#scrptr ; make sure drawing happens to other screen
+
+; draw dotted border lines for play area
+    mov #SCREEN_SIZE_B-SCREEN_WIDTH_B, r0
+draw_lines:
+    mov #^B1111111011111110, screen1(r0)
+    mov #^B0111111101111111, screen1+26(r0)
+    sub #SCREEN_WIDTH_B, r0
+    mov #^B1111111111111111, screen1(r0)
+    sub #SCREEN_WIDTH_B, r0
+    bpl draw_lines
+
+    mov #spr_time, @#bcopy_data
+    mov #spr_time_H, @#bcopy_h
+    clr @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+
+    mov #spr_coins, @#bcopy_data
+    mov #spr_coins_H, @#bcopy_h
+    mov #8*13, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
+    jsr pc, drawbitmap
+
+    mov #gfx_title_ptr, r0
+    mov #screen1+SCREEN_SIZE_B-4, r1
+    mov #24, r2
+    mov #SCREEN_WIDTH_B, r3
+    mov #12, r4
+    jsr pc, copy_gfx
+
+; display screen 0
+    mov #screen0, @#LCDINA
+    ;mov #screen0, @#scrptr ; for when flipping disabled
+
+; fade screen 1 to screen 0
+    mov #screen1+SCREEN_SIZE_B, @#FADE_SRC
+    mov #screen0+SCREEN_SIZE_B, @#FADE_DST
+    mov #SCREEN_WIDTH_B, @#FADE_SRC_STRIDE
+    mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
+    jsr pc, fade_gfx
+
+titleLoop:
+    cmpb @#inkey, @#jumpButton
+    bne titleLoop
+    clrb @#inkey
+
+    jsr pc, fade_out
+
+; reset state
     mov #12345, @#randomSeed
 
-    ; reset state
     mov #PLAYER_STARTX*POS_PER_TILE, @#playerX
-    mov #4*POS_PER_PX, bgY ; start centered
+    mov #4*POS_PER_PX, @#bgY ; start centered
     clr @#playerXSpeed
     clr @#playerYSpeed
     mov #plspriteR, @#plsprite
@@ -1615,61 +1680,6 @@ clearCollisionMap:
     mov #PLAYER_STARTY+1, @#gen_y
     jsr pc, genDown
 
-    mov #SCREEN_SIZE_B+2, r0
-clearScreens:
-    mov #-1, screen0-2(r0)
-    mov #-1, screen1-2(r0)
-    dec r0
-    sob r0, clearScreens
-
-; draw dotted border lines for play area
-    mov #SCREEN_SIZE_B-SCREEN_WIDTH_B, r0
-draw_lines:
-    mov #^B1111111011111110, screen1(r0)
-    mov #^B0111111101111111, screen1+26(r0)
-    sub #SCREEN_WIDTH_B*2, r0
-    bpl draw_lines
-
-; draw labels
-    mov #screen1, @#scrptr ; make sure drawing happens to other screen
-
-    mov #spr_time, @#bcopy_data
-    mov #spr_time_H, @#bcopy_h
-    clr @#bcopy_x
-    mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-
-    mov #spr_coins, @#bcopy_data
-    mov #spr_coins_H, @#bcopy_h
-    mov #8*13, @#bcopy_x
-    mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
-    jsr pc, drawbitmap
-
-    mov #gfx_title_ptr, r0
-    mov #screen1+SCREEN_SIZE_B-4, r1
-    mov #24, r2
-    mov #SCREEN_WIDTH_B, r3
-    mov #12, r4
-    jsr pc, copy_gfx
-
-; display screen 0
-    mov #screen0, @#LCDINA
-    ;mov #screen0, @#scrptr ; for when flipping disabled
-
-; fade screen 1 to screen 0
-    mov #screen1+SCREEN_SIZE_B, @#FADE_SRC
-    mov #screen0+SCREEN_SIZE_B, @#FADE_DST
-    mov #SCREEN_WIDTH_B, @#FADE_SRC_STRIDE
-    mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
-    jsr pc, fade_gfx
-
-titleLoop:
-    cmpb @#inkey, @#jumpButton
-    bne titleLoop
-    clr @#inkey
-
-    jsr pc, fade_out
-
 ; draw first frame
     clr @#scrollPX
     jsr pc, scrollScreen
@@ -1687,13 +1697,16 @@ titleLoop:
 ; drawNumber routine will draw to both pages and it won't look good to happen
 ; before the fade, and i don't feel like making the routine more "robust" in
 ; this way.
+    ; clear the column first in case there was something there from the last play
+    mov #SCREEN_SIZE_B-2, r1
+    jsr pc, clearColumn
+
     mov @#coins, @#dnum_val
     mov #8*14, @#dnum_x
     mov #1, @#dnum_y
     jsr pc, drawNumber
 
 loop:
-    ;mov @#inkey, @#screen0
     cmpb @#gameMode, #GAME_MODE_RUNNING
     bne not_running
     
@@ -1706,21 +1719,21 @@ loop:
     beq moveLeft
     cmpb @#inkey, @#jumpButton
     beq thrust
-    br latMoveDone
+    br moveDone
 moveRight:
     movb #-PLAYER_ACCEL, @#playerYDir
     mov #plspriteR, @#plsprite
-    clr @#inkey
-    br latMoveDone
+    clrb @#inkey
+    br moveDone
 moveLeft:
     movb #PLAYER_ACCEL, @#playerYDir
     mov #plspriteL, @#plsprite
-    clr @#inkey
-    br latMoveDone
+    clrb @#inkey
+    br moveDone
 thrust:
     movb #-PLAYER_THRUST, @#playerXDir
-    clr @#inkey
-latMoveDone:
+    clrb @#inkey
+moveDone:
 
     jsr pc, updatePlayerMovement
 
@@ -1762,7 +1775,90 @@ noflipscr1:
 
     jsr pc, getRandom
 
-    br loop
+    cmpb @#gameMode, #GAME_MODE_RUNNING
+    beq loop
+
+    dec @#counter
+    bne loop
+
+    ; force operations on screen 0
+    ; both screens should have identical contents at this point
+    mov #screen0, @#LCDINA
+
+endLoop:
+    cmpb @#inkey, @#jumpButton
+    bne endLoop
+    clrb @#inkey
+
+    mov #SCREEN_HEIGHT, r0
+clear_rows:
+    movb #12, scratch-1(r0)
+    sob r0, clear_rows
+
+melt_row:
+    ; count all unmelted rows
+    clr r2
+    mov #SCREEN_HEIGHT, r0
+melt_check_rows:
+    tstb scratch-1(r0)
+    beq row_melted
+    inc r2
+row_melted:
+    sob r0, melt_check_rows
+
+    ; if none are left, restart
+    tst r2
+    beq do_restart
+
+    ; get a row from 0 to number of rows to go - 1
+    jsr pc, getRandom
+    clr r0
+    div r2, r0
+
+    ; find the index of the row
+    mov #SCREEN_HEIGHT, r0
+melt_find_row:
+    tstb scratch-1(r0)
+    beq find_row_melted ; if row is melted, don't count
+    dec r1
+    bmi find_row_break ; if the Nth unmelted row is found, break
+find_row_melted:
+    sob r0, melt_find_row
+    ; this shouldn't fall through
+find_row_break:
+
+    dec r0 ; loop is N to 1, change to N-1 to 0
+    decb scratch(r0) ; count down row meltedness
+
+    mov r0, r1 ; force 16 bit multiplies
+
+    ; get first byte of row
+    cmp r1, #SCREEN_HEIGHT/2
+    bge melt_bottom_scr
+    mul #SCREEN_WIDTH_B, r1
+    br melt_got_ptr
+melt_bottom_scr:
+    sub #SCREEN_HEIGHT/2, r1
+    mul #SCREEN_WIDTH_B, r1
+    inc r1 ; high byte
+melt_got_ptr:
+    add #screen0+2, r1 ; add screen pointer and top status bar
+
+    mov #^B11111111, r3
+    mov #12, r0
+melt_loop:
+    movb (r1), r2
+    movb r3, (r1)+
+    inc r1
+    mov r2, r3
+    sob r0, melt_loop
+
+    br melt_row
+
+do_restart:
+    jsr pc, delay
+
+    jmp restart_game
 
 STRIP_W = 8
 plspriteR:
@@ -2190,6 +2286,8 @@ leftButton:
     .byte 0
 jumpButton:
     .byte 0
+counter:
+    .word 0
 
 endOfRAM: ; must not go beyond 16KB
 
