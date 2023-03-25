@@ -62,6 +62,7 @@ scratch: ; this can be used as memory after things are loaded
     KEY_W = 75
     KEY_X = 87
     KEY_7 = 71
+    KEY_R = 19
 
 ; ########################################
 ; ##### Loader                       #####
@@ -236,10 +237,10 @@ dnum_loop:
     mov @#bcopy_h, -(sp)
     mov @#bcopy_y, -(sp)
     mov #screen0, @#scrptr
-    jsr pc, drawbitmap
+    jsr pc, drawBitmap
     mov #screen1, @#scrptr
     mov (sp), @#bcopy_y
-    jsr pc, drawbitmap
+    jsr pc, drawBitmap
     ; restore position and advance height
     mov (sp)+, @#bcopy_y
     add (sp)+, @#bcopy_y
@@ -1562,6 +1563,97 @@ fade_gfx:
 
     rts pc
 
+clearControlBox:
+    ; 93rd pixel starting on the 4th from the bottom
+    ; 88 (11 words) is the nearest byte
+    ; masks will be 00001111 and 11111100
+    ; +1 to get the high byte (bottom of the screen)
+    mov #SCREEN_HEIGHT/2-4*SCREEN_WIDTH_B+22+1, r1
+clearC_loop:
+    movb #^B00001111, screen0(r1)
+    movb #^B11111100, screen0+2(r1)
+    sub #SCREEN_WIDTH_B, r1
+    bpl clearC_no_screen_transition
+    add #SCREEN_HEIGHT/2-1, r1
+clearC_no_screen_transition:
+    sob r0, clearC_loop
+
+    rts pc
+
+editControls:
+    clrb @#inkey
+    ; make draws happen to screen 0, so they actually appear
+    mov #screen0, @#scrptr
+
+    jsr pc, fade_out
+
+    jsr pc, delay
+
+    mov #gfx_keys_ptr, @#FADE_SRC
+    mov #screen0+SCREEN_SIZE_B-4, @#FADE_DST
+    mov #24, @#FADE_SRC_STRIDE
+    mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
+    jsr pc, fade_gfx
+
+    jsr pc, delay
+
+    mov #spr_left, @#bcopy_data
+    mov #spr_left_H, @#bcopy_h
+    mov #93, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_left_H-3, @#bcopy_y
+    jsr pc, drawBitmap
+
+editC_waitLeft:
+    movb @#inkey, r0
+    clrb @#inkey
+    tstb r0
+    beq editC_waitLeft
+    movb r0, @#leftButton
+
+    mov #spr_left_H, r0
+    jsr pc, clearControlBox
+
+    mov #spr_right, @#bcopy_data
+    mov #spr_right_H, @#bcopy_h
+    mov #93, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_right_H-3, @#bcopy_y
+    jsr pc, drawBitmap
+
+editC_waitRight:
+    movb @#inkey, r0
+    clrb @#inkey
+    tstb r0
+    beq editC_waitRight
+    cmpb r0, @#leftButton
+    beq editC_waitRight
+    movb r0, @#rightButton
+
+    mov #spr_right_H, r0
+    jsr pc, clearControlBox
+
+    mov #spr_jump, @#bcopy_data
+    mov #spr_jump_H, @#bcopy_h
+    mov #93, @#bcopy_x
+    mov #SCREEN_HEIGHT-spr_jump_H-3, @#bcopy_y
+    jsr pc, drawBitmap
+
+editC_waitJump:
+    movb @#inkey, r0
+    clrb @#inkey
+    tst r0
+    beq editC_waitJump
+    cmpb r0, @#leftButton
+    beq editC_waitJump
+    cmpb r0, @#rightButton
+    beq editC_waitJump
+    movb r0, @#jumpButton
+
+    jsr pc, fade_out
+
+    jsr pc, delay
+
+    br restart_game
+
 ; ########################################
 ; ##### Start                        #####
 ; ########################################
@@ -1593,6 +1685,7 @@ draw_lines:
     mov #^B1111111011111110, screen1(r0)
     mov #^B0111111101111111, screen1+26(r0)
     sub #SCREEN_WIDTH_B, r0
+    ; redraw the black background of the timer, as it's inverted during play
     mov #^B1111111111111111, screen1(r0)
     sub #SCREEN_WIDTH_B, r0
     bpl draw_lines
@@ -1601,13 +1694,13 @@ draw_lines:
     mov #spr_time_H, @#bcopy_h
     clr @#bcopy_x
     mov #SCREEN_HEIGHT-spr_time_H-1, @#bcopy_y
-    jsr pc, drawbitmap
+    jsr pc, drawBitmap
 
     mov #spr_coins, @#bcopy_data
     mov #spr_coins_H, @#bcopy_h
     mov #8*13, @#bcopy_x
     mov #SCREEN_HEIGHT-spr_coins_H-1, @#bcopy_y
-    jsr pc, drawbitmap
+    jsr pc, drawBitmap
 
     mov #gfx_title_ptr, r0
     mov #screen1+SCREEN_SIZE_B-4, r1
@@ -1618,7 +1711,6 @@ draw_lines:
 
 ; display screen 0
     mov #screen0, @#LCDINA
-    ;mov #screen0, @#scrptr ; for when flipping disabled
 
 ; fade screen 1 to screen 0
     mov #screen1+SCREEN_SIZE_B, @#FADE_SRC
@@ -1627,7 +1719,12 @@ draw_lines:
     mov #SCREEN_WIDTH_B, @#FADE_DST_STRIDE
     jsr pc, fade_gfx
 
+    clrb @#inkey
 titleLoop:
+    cmpb @#inkey, #KEY_R
+    bne no_editControls
+    jmp editControls ; branch distance meh
+no_editControls:
     cmpb @#inkey, @#jumpButton
     bne titleLoop
     clrb @#inkey
@@ -1760,7 +1857,7 @@ running_cont:
     mov r0, @#bcopy_x
     ; center player sprite on screen
     mov #SCREEN_HEIGHT-plsprite_H/2, @#bcopy_y
-    jsr pc, drawbitmap
+    jsr pc, drawBitmap
 
     ;br noflipscr1 ; disable flipping
     cmp @#scrptr, #screen0
@@ -2194,6 +2291,144 @@ gfx_title:
     .word ^D65532, ^D32541, ^D65479, ^D65503, ^D56540, ^D50372
     .word ^D1, ^D221, ^D4561, ^D40349, ^D65471, ^D65411
 gfx_title_ptr:
+
+gfx_keys:
+    .word ^D65013, ^D24400, ^D41085, ^D10255, ^D29760, ^D3840
+    .word ^D16506, ^D43021, ^D256, ^D50432, ^D3840, ^D64512
+    .word ^D65535, ^D42917, ^D41021, ^D29711, ^D10400, ^D3880
+    .word ^D41332, ^D59402, ^D512, ^D9472, ^D3840, ^D64512
+    .word ^D62965, ^D22356, ^D53306, ^D62471, ^D160, ^D1908
+    .word ^D41256, ^D41997, ^D512, ^D9984, ^D53007, ^D64764
+    .word ^D65535, ^D42943, ^D53268, ^D64007, ^D720, ^D34804
+    .word ^D16384, ^D61442, ^D2976, ^D57344, ^D3855, ^D64764
+    .word ^D62973, ^D21370, ^D40960, ^D31235, ^D2000, ^D17146
+    .word ^D32770, ^D43141, ^D0, ^D768, ^D36623, ^D64764
+    .word ^D65535, ^D42493, ^D16385, ^D32067, ^D4000, ^D16506
+    .word ^D7, ^D31298, ^D2177, ^D1216, ^D20239, ^D64764
+    .word ^D63477, ^D61565, ^D3, ^D15777, ^D3904, ^D41085
+    .word ^D10255, ^D9216, ^D2, ^D1056, ^D20239, ^D64764
+    .word ^D65535, ^D62911, ^D5255, ^D15008, ^D1792, ^D41021
+    .word ^D29711, ^D10400, ^D2602, ^D17184, ^D36623, ^D64764
+    .word ^D63477, ^D53342, ^D14983, ^D5328, ^D1812, ^D53306
+    .word ^D62471, ^D160, ^D515, ^D41184, ^D3855, ^D64764
+    .word ^D65535, ^D60861, ^D31235, ^D208, ^D826, ^D53268
+    .word ^D64007, ^D720, ^D33440, ^D41984, ^D3855, ^D64764
+    .word ^D62973, ^D63578, ^D32003, ^D488, ^D17274, ^D40960
+    .word ^D31235, ^D1408, ^D258, ^D9504, ^D3855, ^D64764
+    .word ^D65535, ^D62885, ^D15617, ^D1000, ^D41341, ^D16385
+    .word ^D32067, ^D2720, ^D42, ^D1440, ^D3855, ^D64764
+    .word ^D62975, ^D61648, ^D16033, ^D34768, ^D41021, ^D3
+    .word ^D15777, ^D1280, ^D514, ^D18336, ^D53007, ^D64764
+    .word ^D65535, ^D42405, ^D7888, ^D34720, ^D53310, ^D5255
+    .word ^D15008, ^D512, ^D41515, ^D41184, ^D3855, ^D64764
+    .word ^D65023, ^D23123, ^D7632, ^D768, ^D53278, ^D14983
+    .word ^D5328, ^D1284, ^D512, ^D40960, ^D3855, ^D64764
+    .word ^D65535, ^D48615, ^D2792, ^D778, ^D59421, ^D31235
+    .word ^D208, ^D570, ^D33025, ^D8288, ^D3855, ^D64764
+    .word ^D62975, ^D32209, ^D232, ^D285, ^D59402, ^D32003
+    .word ^D488, ^D300, ^D2, ^D1152, ^D3855, ^D64764
+    .word ^D65535, ^D49061, ^D33012, ^D41277, ^D53248, ^D15617
+    .word ^D1000, ^D41080, ^D514, ^D8832, ^D3855, ^D64764
+    .word ^D65013, ^D24144, ^D33268, ^D53310, ^D41088, ^D16033
+    .word ^D34768, ^D41005, ^D515, ^D41440, ^D53007, ^D64764
+    .word ^D65535, ^D49141, ^D17384, ^D53278, ^D129, ^D7888
+    .word ^D34720, ^D53306, ^D640, ^D41472, ^D3855, ^D64764
+    .word ^D62965, ^D24568, ^D17232, ^D59423, ^D2627, ^D7632
+    .word ^D768, ^D32780, ^D771, ^D58592, ^D3855, ^D64764
+    .word ^D65535, ^D45037, ^D33024, ^D59407, ^D7491, ^D2792
+    .word ^D778, ^D59416, ^D10240, ^D0, ^D3855, ^D64764
+    .word ^D65525, ^D54772, ^D261, ^D62478, ^D15745, ^D232
+    .word ^D285, ^D43016, ^D258, ^D25664, ^D20239, ^D64764
+    .word ^D65535, ^D42485, ^D14, ^D62597, ^D15873, ^D33012
+    .word ^D41277, ^D53248, ^D10754, ^D34208, ^D20239, ^D64764
+    .word ^D65525, ^D20730, ^D20510, ^D59520, ^D7680, ^D33268
+    .word ^D53310, ^D41088, ^D514, ^D34208, ^D20239, ^D64764
+    .word ^D65535, ^D58879, ^D59423, ^D20544, ^D8016, ^D17384
+    .word ^D53278, ^D128, ^D2945, ^D59168, ^D53007, ^D64764
+    .word ^D65533, ^D61812, ^D59407, ^D64, ^D4072, ^D17232
+    .word ^D59423, ^D2049, ^D0, ^D0, ^D3855, ^D64764
+    .word ^D65535, ^D42413, ^D62479, ^D1441, ^D3816, ^D33024
+    .word ^D59407, ^D6210, ^D2474, ^D1056, ^D20239, ^D64764
+    .word ^D63477, ^D20560, ^D62471, ^D3745, ^D34292, ^D261
+    .word ^D62478, ^D11649, ^D514, ^D33440, ^D36623, ^D64764
+    .word ^D65535, ^D42407, ^D64135, ^D7744, ^D33012, ^D14
+    .word ^D62597, ^D14848, ^D33442, ^D33184, ^D3855, ^D64764
+    .word ^D62975, ^D20567, ^D31298, ^D8064, ^D16634, ^D20510
+    .word ^D59520, ^D3072, ^D771, ^D59360, ^D49167, ^D252
+    .word ^D65535, ^D44463, ^D29760, ^D3840, ^D16506, ^D59423
+    .word ^D20544, ^D6736, ^D168, ^D2, ^D207, ^D252
+gfx_keys_ptr:
+
+spr_left:
+    .byte ^B10000000
+    .byte ^B10000000
+    .byte ^B11111111
+    .byte ^B10000000
+    .byte ^B10000000
+    .byte ^B00000000
+    .byte ^B10000000
+    .byte ^B10010000
+    .byte ^B10010000
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B10000001
+    .byte ^B10010001
+    .byte ^B10010001
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B00000001
+    .byte ^B00000001
+    .byte ^B00000001
+    .byte ^B11111111
+spr_left_H = 20
+
+spr_right:
+    .byte ^B10000000
+    .byte ^B10000000
+    .byte ^B11111111
+    .byte ^B10000000
+    .byte ^B10000000
+    .byte ^B00000000
+    .byte ^B11111111
+    .byte ^B00010000
+    .byte ^B00010000
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B01001110
+    .byte ^B10001001
+    .byte ^B10000001
+    .byte ^B01111110
+    .byte ^B00000000
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B01100111
+    .byte ^B10011000
+    .byte ^B10010000
+    .byte ^B11111111
+spr_right_H = 22
+
+spr_jump:
+    .byte ^B01100000
+    .byte ^B10010000
+    .byte ^B10010000
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B11111111
+    .byte ^B01000000
+    .byte ^B00100000
+    .byte ^B01000000
+    .byte ^B11111111
+    .byte ^B00000000
+    .byte ^B11111110
+    .byte ^B00000001
+    .byte ^B00000001
+    .byte ^B11111110
+    .byte ^B00000000
+    .byte ^B11111110
+    .byte ^B00000001
+    .byte ^B00000001
+    .byte ^B00000010
+spr_jump_H = 20
 
 .EVEN
 
